@@ -56,7 +56,8 @@ class Ingested:
     notes: str
 
 
-def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
+def content_hash(path: Path, chunk: int = 1 << 20) -> str:
+    """BLAKE2b of the file bytes — the identity every stage keys on."""
     h = hashlib.blake2b(digest_size=16)
     with path.open("rb") as f:
         while block := f.read(chunk):
@@ -77,8 +78,10 @@ def _exif_bits(path: Path) -> tuple[int | None, int | None, datetime | None,
                                     int | None, float | None, float | None, str | None]:
     """(width, height, exif local datetime, exif utc offset minutes, lat, lon, camera)."""
     try:
+        # No im.load(): dimensions and EXIF are available from the header, and
+        # decoding every pixel here would double the work for an archive whose
+        # pixels stage 1 is about to decode anyway.
         with Image.open(path) as im:
-            im.load()
             w, h = im.size
             exif = im.getexif()
     except (UnidentifiedImageError, OSError, ValueError):
@@ -203,7 +206,7 @@ def ingest_one(match: takeout.Match) -> Ingested:
         notes.append(f"low-confidence sidecar match ({match.strategy})")
 
     return Ingested(
-        sha=sha256_file(p), path=str(p), filename=p.name, bytes=p.stat().st_size,
+        sha=content_hash(p), path=str(p), filename=p.name, bytes=p.stat().st_size,
         kind=kind, width=w, height=h,
         taken_utc=taken_utc, taken_local=local,
         tz_offset_min=offset_min, tz_source=tz_source,

@@ -1,4 +1,4 @@
-# Photobook Curator — Design Plan (v0.2)
+# Photobook Curator — Design Plan (v0.6)
 
 **Status:** Phase 0 is built and tested against a synthetic archive (see
 [docs/phase0.md](docs/phase0.md) for what changed once it met Python). Phases
@@ -12,6 +12,9 @@
 | Photo source | **Google Photos is the only copy** | Album-scoped Takeout becomes the *primary* Phase 0 ingest, not a Phase 3 fallback. The sidecar matcher is now critical path |
 | Text in the book | **Light labels** — chapter titles, dates, place names | Adds a text-page template per chapter plus an *offline* reverse geocoder; no prose-review step |
 | Backup quality | **Storage Saver** (confirmed) | There is no original to fall back to for *any* photo. DPI becomes a tiered soft constraint rather than a 300 DPI gate, recompression detection joins Stage 1, and the pipeline must never re-encode |
+| Delivery | **Files, not an application** — a script that writes a folder of artifacts | No server, no launcher, no state machine, no update mechanism. Review is a self-contained HTML file you double-click. See §9 |
+| Review | **Couch, with the people who were there** | Two passes with a batch boundary between them; the book plays, the room reacts. This removes the live re-solve requirement entirely |
+| Orchestration | **A Claude Code skill, non-load-bearing** | Knows the stage order, the checkpoints and how to read the output. The CLI works identically without it |
 
 **The job:** one trip → ~1,000–2,000 photos in Google Photos → a printed photo book
 that is worth keeping, with as little human slog as possible.
@@ -241,7 +244,8 @@ Cheap, deterministic, explainable. Runs on everything.
 - Perceptual hashes (pHash + dHash) → exact and near-identical.
 - Time-clustered bursts: photos within N seconds + high embedding similarity =
   one burst. Pick a **best-in-burst** representative using Stage 1 + Stage 3
-  scores, keep the rest as "alternates" (the review UI offers them as swaps).
+  scores, keep the rest as "alternates" (written to `alternates/`, ranked, so a
+  swap is a drag in Finder).
 - Cross-device dedupe: same scene shot by two phones is a burst too.
 - Result: 1,200 → ~400–600 *distinct moments*, which is the real working set.
 
@@ -332,21 +336,113 @@ suspicious.
   margins per vendor spec; layflat vs perfect-bound changes the rules.
 - Output: `book.json` document model → proof PDF (Path A) or print PDF (Path B).
 
-### Stage 8 — Human review (non-negotiable)
-A local web UI. Not optional, not phase 3 — the whole system is a *proposal
-engine*, and a proposal you can't edit is worthless.
-- Contact-sheet view of the selection, grouped by chapter, with reasons shown.
-- **Lock** (never remove), **reject** (never suggest again, and remember why),
-  **swap** (shows burst alternates and semantic neighbours ranked).
-- Every edit re-runs Stages 6–7 downstream with locks respected, in < 2 seconds.
-- The reject/lock log is training data for the preference model. Year two is
-  better than year one automatically.
+### Stage 8 — Review (non-negotiable, and it is a file)
+The whole system is a *proposal engine*, and a proposal you can't argue with is
+worthless. But the review does not need an application — it needs `proof.html`:
+one self-contained file, images embedded, that you double-click and put on a TV.
 
-### Stage 9 — Export
-- **Path A**: `01_001_hero_lake.jpg …` ordered/renamed set + printable proof PDF
-  + a per-spread cheat sheet, ready to drag into a vendor editor.
-- **Path B**: print PDF to vendor spec → Blurb / Lulu / Peecho API → order.
-- Always also emit an archival JSON of the whole decision graph.
+It is a **couch activity** with the people who were on the trip, in two passes:
+
+1. **Watch.** The book plays full-screen, auto-advancing every ~8 seconds.
+   Nobody edits. Anyone objects, the driver clicks; the spread is flagged and
+   it moves on. 44 spreads in about fifteen minutes, and everyone has seen the
+   whole arc — which is the only way to catch pacing, an underweighted day, or
+   an ending that doesn't land. Per-spread deliberation never surfaces those,
+   and reliably strands a group on spread three.
+2. **Fix.** One button writes `rejects.txt`. Re-run. Flip through what changed.
+
+**The batch boundary is a feature.** An earlier draft had rejections re-solving
+live, which forced a stability requirement on the optimizer — a minimal-change
+term so the book didn't reshuffle under the user. That requirement was entirely
+self-inflicted: nobody is editing during pass one, so a thirty-second batch
+re-run between passes does the same job with none of the complexity.
+
+Two things the review must carry beyond the book itself:
+- **`rejected.html`, sorted by margin** — not by filename. Someone will ask
+  whether it threw away the good one. Fifteen seconds of scrolling settles it,
+  and the fear is the main reason a tool like this gets abandoned.
+- **`all-photos.html`, searchable** — the group's collective memory beats the
+  model's, and "where's the one of the boat?" must not be a dead end. Filtering
+  runs client-side over the captions and embeddings; no server.
+
+Every rejection is a labelled pair. The review *is* the preference calibration,
+which means the explicit pairwise session may never be needed — year one
+bootstraps from the first book's rejects.
+
+### Stage 9 — Export: a folder, not an application
+
+```
+Portugal-2026/
+  proof.html          ← the couch session. double-click this.
+  all-photos.html     ← searchable index of all 1,213
+  assemble.md         ← how to build it at the vendor, for this exact run
+  pages/
+    page-001/  p001_1_hero_arrival-lisbon.jpg
+    page-002/  p002_1_alfama-steps.jpg
+               p002_2_laundry-lines.jpg
+  alternates/         ← per page, ranked. swap by dragging.
+  rejected.html       ← everything cut, sorted by how close it came
+  book.json           ← document model; lets a re-run respect earlier edits
+  00-triage.html  01-moments.html  02-story.html
+```
+
+**The page number goes in the filename, not just the folder.** Consumer editors
+have you upload everything into one project library and then place it, so the
+folder structure evaporates on the way in. With the page number in the name, 200
+photos land in one alphabetical list that is already in book order.
+
+If spread-as-image passes the free vendor check (§5), `pages/` instead holds one
+flattened image per page and the handoff becomes 88 drags into full-bleed slots
+with no arrangement decisions at all. Same document model, different renderer.
+
+The bundle is self-explanatory in five years, inspectable in Finder, and does not
+depend on this project still existing.
+
+---
+
+## 3a. The run, end to end
+
+```
+photobook build ~/Downloads/Takeout        # or: ask Claude to make the book
+```
+
+Four stages, **two checkpoints**, roughly 45 minutes of which about 3 are yours.
+Both checkpoints are thirty-second glances that catch errors which otherwise
+cost an hour.
+
+| | Stage | Time | Output | Your part |
+|---|---|---|---|---|
+| **A** | Triage | 2 min | `00-triage.html` | **Checkpoint.** "1,213 photos, 12–24 June, 1,210 sidecars matched." Catches the Takeout that only exported 40 photos, before the expensive stages run. |
+| **B** | Quality & dedupe | ~15 min | `01-moments.html` | Unattended. 1,213 frames → ~480 moments. |
+| **C** | Understanding | ~25 min | `02-story.html` | **Checkpoint.** The chapter breakdown. If the drive to Sintra got merged into Sintra, every page allocation below is wrong — and it is a config line and a one-minute re-run to fix. |
+| **D** | Select & lay out | ~1 min | the bundle | Unattended. |
+
+`--preview` runs all four on a 150-photo sample and produces a 12-page book in
+about five minutes. Worth doing first: it establishes whether the thing has any
+taste before you commit the full run.
+
+Timings are estimates until it runs on a real archive.
+
+**Then:** couch session from `proof.html` → `rejects.txt` → `photobook build
+--again` (30 s) → second pass → upload `pages/` to the vendor and work down
+`assemble.md`. Call the manual assembly an hour for 88 pages; tedious but
+mindless, and resumable.
+
+### Why a Claude Code skill
+
+`.claude/skills/photobook/` carries the stage order, the checkpoints, the
+thresholds that mean "something is wrong", and the recovery paths — so the
+annual-recall problem is solved by a conversation rather than by a launcher, a
+bootstrapper and an auto-updater. Claude Code becomes the entry point, which is
+why §6 no longer contains a desktop application.
+
+Two constraints on it, both load-bearing:
+
+- **The skill must never be load-bearing itself.** Every stage runs standalone
+  from the CLI and produces identical output. The skill is convenience.
+- **It orchestrates; it never analyses.** It runs the pipeline and interprets
+  what the pipeline reports. It must never estimate a photo's quality by looking
+  at it, or state a number no stage produced.
 
 ---
 
@@ -460,14 +556,21 @@ recoverable mistake next year, not a disaster — and cheaper than $60 of test
 books to prevent it.
 
 **Phase 1 — The brain.** Embeddings, face clustering, VLM captions, chaptering,
-the constrained selector, the preference calibration session, the review UI.
-This is where the product actually lives.
+and the constrained selector. This is where the product actually lives. The
+preference model bootstraps from the first book's rejections rather than from a
+separate calibration chore.
 
 **Phase 2 — The book.** Layout engine, spread grammar, pacing, crop suggestions,
-proof PDF, ordered export for Path A. First real book ordered from Mixbook.
+`proof.html`, and the output bundle. First real book ordered.
 
-**Phase 3 — Automation & polish.** Print PDF + Blurb/Lulu API ordering, Google
-Photos Picker source, the Data Portability API spike, multi-year memory.
+**Phase 3 — Polish.** Spread-as-image renderer if the vendor check passes,
+`all-photos.html` search, multi-year memory, Google Photos Picker as a second
+source.
+
+**Not planned, deliberately:** a desktop application, a local server, accounts,
+cloud sync, a layout editor, or scoring-weight sliders. Every one of those
+solves a problem the application itself would create. If the selection is wrong
+the fix is rejecting things, not tuning parameters nobody has intuitions for.
 
 ---
 
@@ -475,7 +578,8 @@ Photos Picker source, the Data Portability API spike, multi-year memory.
 
 | Risk | Mitigation |
 |---|---|
-| "Good" is subjective and the model will be confidently wrong | Preference calibration + review UI with locks; the app proposes, you decide |
+| "Good" is subjective and the model will be confidently wrong | The proof is the argument surface: watch, flag, re-run. Rejections are labelled pairs, so it improves each year |
+| A silent wrong answer beats a loud failure to nobody | Every fuzzy sidecar match records its strategy and confidence; contested guesses are withdrawn rather than resolved (see `docs/phase0.md`) |
 | Storage Saver recompression (confirmed, unrecoverable) | Detect via quantization tables in Stage 1 and cap placement size accordingly; never re-encode in our own pipeline; disable vendor auto-enhance. There is no original to fall back to |
 | Google changes API access again | Local-folder core, sources are plugins |
 | Auto-layout produces subtly ugly spreads | Small hand-designed template vocabulary beats free-form placement; proof PDF before ordering |
@@ -495,11 +599,9 @@ only), text (light labels). Still open:
 2. **Videos / Live Photos**: extract stills and treat them as photos, or ignore
    them? Live Photos in particular often hide the better frame.
 3. **Budget and format**: 80 pages at ~$150, or the big 12×12 layflat at ~$350?
-   Page budget is a direct input to the selection optimizer, so this is a real
-   parameter rather than a preference.
-4. **Just you?** Multi-user changes auth and hosting completely — and makes the
-   Picker path mandatory rather than optional, since you can't ask strangers to
-   run Takeout.
+   Page budget is a direct input to the selection optimizer and to
+   `--page-inches`, so it is a real parameter rather than a preference. This is
+   the one that blocks work.
 5. **How many trips of backlog?** If there are five years of past trips sitting in
    Google Photos, the preference-calibration model gets much better much faster,
    and "catch-up mode" becomes a feature worth designing for.

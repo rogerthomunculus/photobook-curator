@@ -1,0 +1,17 @@
+README.md
+pyproject.toml
+photobook/__init__.py
+photobook/cli.py
+photobook/db.py
+photobook/dedupe.py
+photobook/ingest.py
+photobook/quality.py
+photobook/report.py
+photobook/takeout.py
+photobook_curator.egg-info/PKG-INFO
+photobook_curator.egg-info/SOURCES.txt
+photobook_curator.egg-info/dependency_links.txt
+photobook_curator.egg-info/entry_points.txt
+photobook_curator.egg-info/requires.txt
+photobook_curator.egg-info/top_level.txt
+tests/test_takeout.py

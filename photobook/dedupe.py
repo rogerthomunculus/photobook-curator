@@ -18,9 +18,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-BURST_SECONDS = 25.0     # frames further apart than this start a new burst
-BURST_DISTANCE = 14      # max Hamming distance within a burst (64-bit hash)
-DUPLICATE_DISTANCE = 6   # at or below this, effectively the same frame
+BURST_SECONDS = 25.0     # max gap between consecutive frames in one burst
+BURST_MAX_SPAN = 90.0    # max total span of a burst, to stop transitive chaining
+BURST_DISTANCE = 14      # max Hamming distance from the burst anchor (64-bit hash)
 
 
 def _dct_matrix(n: int) -> np.ndarray:
@@ -52,6 +52,7 @@ def phash(img: Image.Image) -> int:
 
 def hashes(path: Path) -> tuple[int, int]:
     with Image.open(path) as im:
+        im.draft("L", (64, 64))   # both hashes work from a 32x32; decode small
         im.load()
         return dhash(im), phash(im)
 
@@ -69,70 +70,49 @@ class Frame:
     score: float = 0.0   # quality score; the best in a burst represents it
 
 
-class _Union:
-    def __init__(self, n: int) -> None:
-        self.p = list(range(n))
-
-    def find(self, x: int) -> int:
-        while self.p[x] != x:
-            self.p[x] = self.p[self.p[x]]
-            x = self.p[x]
-        return x
-
-    def union(self, a: int, b: int) -> None:
-        ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self.p[rb] = ra
-
-
 def group_bursts(frames: list[Frame], *, seconds: float = BURST_SECONDS,
-                 distance: int = BURST_DISTANCE) -> dict[str, tuple[int, bool]]:
+                 distance: int = BURST_DISTANCE,
+                 max_span: float = BURST_MAX_SPAN) -> dict[str, tuple[int, bool]]:
     """Group frames into bursts. Returns sha -> (burst_id, is_representative).
 
-    Frames without a timestamp are grouped on appearance alone, which is the
-    honest fallback: we would rather over-group an untimed frame than scatter
-    it across the book.
+    A sequential pass, not transitive clustering. Union-find looks natural here
+    and is wrong: with a 25-second window it will chain a frame at t=0 to one at
+    t=0:20 to one at t=0:40 and onwards, so a slow sequence of similar shots — a
+    dinner table, a walk down one street — collapses into a single "moment" and
+    the rest are silently dropped from consideration. Comparing every candidate
+    against the burst's *anchor* rather than its predecessor, and capping the
+    total span, stops both the time drift and the appearance drift.
+
+    Frames with no timestamp each become their own moment. We could group them
+    on appearance alone, but a photo we cannot place in time is exactly the
+    photo we should not be quietly merging into something else.
     """
     if not frames:
         return {}
-    order = sorted(range(len(frames)),
-                   key=lambda i: (frames[i].taken is None,
-                                  frames[i].taken or datetime.min))
-    uf = _Union(len(frames))
 
-    for pos, i in enumerate(order):
-        fi = frames[i]
-        # Only look forward while the time gap can still qualify; with the list
-        # in time order this keeps the comparison linear in practice.
-        for j in order[pos + 1:]:
-            fj = frames[j]
-            if fi.taken and fj.taken:
-                gap = abs((fj.taken - fi.taken).total_seconds())
-                if gap > seconds:
-                    break
-            close = (hamming(fi.phash, fj.phash) <= distance
-                     or hamming(fi.dhash, fj.dhash) <= distance)
-            if close:
-                uf.union(i, j)
+    dated = sorted((f for f in frames if f.taken is not None), key=lambda f: f.taken)
+    undated = [f for f in frames if f.taken is None]
 
-    groups: dict[int, list[int]] = {}
-    for i in range(len(frames)):
-        groups.setdefault(uf.find(i), []).append(i)
+    groups: list[list[Frame]] = []
+    for f in dated:
+        if groups:
+            cur = groups[-1]
+            anchor, prev = cur[0], cur[-1]
+            joins = (
+                (f.taken - prev.taken).total_seconds() <= seconds
+                and (f.taken - anchor.taken).total_seconds() <= max_span
+                and (hamming(f.phash, anchor.phash) <= distance
+                     or hamming(f.dhash, anchor.dhash) <= distance)
+            )
+            if joins:
+                cur.append(f)
+                continue
+        groups.append([f])
+    groups.extend([f] for f in undated)
 
     out: dict[str, tuple[int, bool]] = {}
-    for bid, (_, members) in enumerate(sorted(groups.items(),
-                                              key=lambda kv: min(kv[1]))):
-        best = max(members, key=lambda i: frames[i].score)
-        for i in members:
-            out[frames[i].sha] = (bid, i == best)
+    for bid, members in enumerate(groups):
+        best = max(members, key=lambda f: f.score)
+        for f in members:
+            out[f.sha] = (bid, f is best)
     return out
-
-
-def exact_duplicates(frames: list[Frame]) -> list[tuple[str, str]]:
-    """Pairs that are effectively the same frame, e.g. the same shot off two phones."""
-    pairs = []
-    for a in range(len(frames)):
-        for b in range(a + 1, len(frames)):
-            if hamming(frames[a].phash, frames[b].phash) <= DUPLICATE_DISTANCE:
-                pairs.append((frames[a].sha, frames[b].sha))
-    return pairs

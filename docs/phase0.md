@@ -83,6 +83,52 @@ stored as hex text now), and content-addressing silently collapsing fixture
 frames whose blur radii happened to round to the same kernel — correct
 behaviour, misleading test.
 
+## Two bugs the audit found
+
+Both were silent. Neither would have announced itself on real data — they would
+have produced a subtly worse book.
+
+**Burst grouping chained transitively.** The first implementation used union-find
+over pairs within a 25-second window, which merges a frame at t=0 with one at
+t=0:20, then t=0:40, and onwards. Twelve visually similar frames spanning three
+minutes forty collapsed into a single "moment", silently removing eleven
+distinct frames from consideration — a dinner table, or a walk down one street,
+would vanish into one photo.
+
+Replaced with a sequential pass that compares each candidate against the burst's
+**anchor** rather than its predecessor, and caps the total span at 90 seconds.
+That stops both the time drift and the appearance drift a slow pan produces. A
+genuine eight-frame burst three seconds apart still groups as one.
+
+**Two media files could claim one truncated sidecar.** Truncation matching is a
+prefix guess, and `PXL_..._PORTRAIT-01.COVER.jpg` and `...-02.COVER.jpg` both
+reach a sidecar truncated before the digits. Both were awarded it at confidence
+0.8, so both silently inherited one capture time — exactly the corruption the
+module's docstring claims to prevent.
+
+Now a firm claim (`exact`, `stem`) beats any guess on the same sidecar, and two
+guesses with no firm claim cancel each other out. A withdrawn match becomes
+`contested(...)` and unmatched, so the photo falls back to EXIF or is reported
+undated. Both outcomes are visible; a wrong timestamp is not. Derivative claims
+— an `-edited` copy, a live-photo video sharing its still's sidecar — are
+legitimate and unaffected.
+
+Both are covered by regression tests in `tests/test_takeout.py`.
+
+## Smaller findings from the same pass
+
+- `ingest` was calling `im.load()` purely to read dimensions and EXIF, decoding
+  every pixel of every photo for data that lives in the header — then stage 1
+  decoded them all again. Removed.
+- Both stage 1 and the hashing now call `Image.draft()` before loading, so
+  libjpeg decodes at roughly the size the metrics are computed at instead of
+  full resolution. On the fixture the whole pipeline runs in about 6 seconds.
+- The "byte-identical duplicates" count was computed against the whole table
+  rather than the delta, so it was wrong on any re-run.
+- `sha256_file` computed BLAKE2b. Renamed to `content_hash`.
+- `exact_duplicates()` was unused, O(n²), and duplicated what burst grouping
+  already does. Deleted.
+
 ## Open calibration work, once the real archive is here
 
 - Banding threshold — currently a guess.

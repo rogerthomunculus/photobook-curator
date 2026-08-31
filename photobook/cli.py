@@ -54,6 +54,7 @@ def cmd_triage(args) -> int:
 def cmd_ingest(args) -> int:
     root = Path(args.archive).expanduser().resolve()
     con = connect(root)
+    before = con.execute("SELECT COUNT(*) FROM asset").fetchone()[0]
     rows = ingest_dir(root)
     with con:
         for r in rows:
@@ -68,9 +69,11 @@ def cmd_ingest(args) -> int:
                  r.taken_local.isoformat(sep=" ") if r.taken_local else None,
                  r.tz_offset_min, r.tz_source, r.lat, r.lon, r.camera,
                  r.sidecar_path, r.sidecar_strategy, r.sidecar_conf, r.notes))
-    dupes = len(rows) - con.execute("SELECT COUNT(*) FROM asset").fetchone()[0]
+    after = con.execute("SELECT COUNT(*) FROM asset").fetchone()[0]
+    dupes = len(rows) - (after - before)
     print(f"ingested {len(rows)} files"
-          + (f" ({dupes} were byte-identical duplicates)" if dupes > 0 else ""))
+          + (f" ({dupes} were byte-identical duplicates of each other"
+             " or of something already in the store)" if dupes > 0 else ""))
     return 0
 
 
@@ -85,13 +88,14 @@ def cmd_analyze(args) -> int:
     n = len(todo)
     print(f"analysing {n} images (page long edge {args.page_inches}\")")
 
+    failures: list[str] = []
     for i, row in enumerate(todo, 1):
         p = Path(row["path"])
         try:
             m = analyze(p, page_long_in=args.page_inches)
             d, ph = hashes(p)
         except Exception as e:                        # keep going; report at the end
-            print(f"\n  !! {p.name}: {type(e).__name__}: {e}", file=sys.stderr)
+            failures.append(f"{p.name}: {type(e).__name__}: {e}")
             continue
         with con:
             con.execute("""
@@ -129,6 +133,13 @@ def cmd_analyze(args) -> int:
         con.execute("DELETE FROM burst")
         con.executemany("INSERT INTO burst (sha,burst_id,is_representative) VALUES (?,?,?)",
                         [(sha, bid, int(rep)) for sha, (bid, rep) in groups.items()])
+
+    if failures:
+        print(f"\n{len(failures)} image(s) could not be analysed:")
+        for f in failures[:10]:
+            print(f"  {f}")
+        if len(failures) > 10:
+            print(f"  … and {len(failures) - 10} more")
 
     moments = len({bid for bid, _ in groups.values()})
     print(f"{len(frames)} frames -> {moments} distinct moments "

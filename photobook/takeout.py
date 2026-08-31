@@ -115,6 +115,13 @@ def index_sidecars(files: list[Path]) -> dict[str, list[Path]]:
     return idx
 
 
+# Strategies that name the file outright. A sidecar may legitimately be shared
+# by an exact claimant and its derivatives (an -edited copy, a live-photo video),
+# but never by two independent prefix guesses.
+_FIRM = ("exact", "stem")
+_DERIVATIVE = ("edited_parent", "live_photo_sibling")
+
+
 def match_all(files: list[Path]) -> list[Match]:
     """Resolve every media file in `files` to a sidecar, best strategy first."""
     by_dir: dict[Path, dict[str, list[Path]]] = {}
@@ -127,7 +134,47 @@ def match_all(files: list[Path]) -> list[Match]:
         if f.suffix.lower() == ".json" or f.suffix.lower() not in MEDIA_EXT:
             continue
         out.append(_match_one(f, by_dir.get(f.parent, {})))
-    return out
+    return _resolve_contested(out)
+
+
+def _resolve_contested(matches: list[Match]) -> list[Match]:
+    """Withdraw prefix guesses when two media files claim the same sidecar.
+
+    Truncation matching is a guess, and two files sharing a prefix can both
+    reach the same sidecar — as happens with
+    `PXL_..._PORTRAIT-01.COVER.jpg` and `...-02.COVER.jpg` against a sidecar
+    truncated before the digits. Left alone, both silently inherit one capture
+    time, which is precisely the corruption this module exists to avoid.
+
+    So: a firm claim beats any guess on the same sidecar, and two guesses with
+    no firm claim cancel each other out. A withdrawn match becomes unmatched,
+    and ingest falls back to EXIF or reports the photo as undated — both of
+    which are visible, unlike a wrong timestamp.
+    """
+    claims: dict[Path, list[Match]] = {}
+    for m in matches:
+        if m.sidecar is not None:
+            claims.setdefault(m.sidecar, []).append(m)
+
+    withdrawn: set[int] = set()
+    for sidecar, group in claims.items():
+        if len(group) < 2:
+            continue
+        guesses = [m for m in group
+                   if not m.strategy.startswith(_FIRM + _DERIVATIVE)]
+        if not guesses:
+            continue
+        firm = [m for m in group if m.strategy.startswith(_FIRM)]
+        # A firm claim settles it; otherwise nobody gets it.
+        losers = guesses if firm else (guesses if len(guesses) > 1 else [])
+        for m in losers:
+            withdrawn.add(id(m))
+
+    return [
+        Match(m.media, None, f"contested({m.strategy})", 0.0)
+        if id(m) in withdrawn else m
+        for m in matches
+    ]
 
 
 def _match_one(media: Path, idx: dict[str, list[Path]]) -> Match:

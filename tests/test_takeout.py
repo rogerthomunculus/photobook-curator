@@ -116,6 +116,74 @@ def run_timestamps(tmp: Path) -> int:
     return failures
 
 
+def run_regressions() -> int:
+    """Two bugs found in audit. Both were silent; both stay fixed here."""
+    from datetime import datetime, timedelta
+    import tempfile
+
+    from photobook.dedupe import Frame, group_bursts
+
+    failures = 0
+
+    # 1. Transitive chaining. Twelve frames 20s apart are inside a 25s window
+    #    pairwise, but span 3m40s in total. Union-find merged all twelve into
+    #    one "moment", silently discarding eleven distinct frames.
+    base = datetime(2026, 6, 12, 12, 0)
+    same = 0xABCD1234ABCD1234
+    frames = [Frame(f"f{i}", base + timedelta(seconds=20 * i), same, same, float(i))
+              for i in range(12)]
+    sizes = {}
+    for sha, (bid, _) in group_bursts(frames).items():
+        sizes[bid] = sizes.get(bid, 0) + 1
+    if len(sizes) < 2 or max(sizes.values()) > 6:
+        print(f"FAIL burst chaining: 12 frames over 3m40s became {sizes}")
+        failures += 1
+    else:
+        print(f"ok   slow sequence splits into {len(sizes)} moments, not 1")
+
+    # A genuine burst must still hold together.
+    tight = [Frame(f"b{i}", base + timedelta(seconds=3 * i), same, same, float(i))
+             for i in range(8)]
+    g = group_bursts(tight)
+    if len({bid for bid, _ in g.values()}) != 1:
+        print("FAIL genuine burst was split")
+        failures += 1
+    elif not g["b7"][1]:
+        print("FAIL burst representative is not the highest-scoring frame")
+        failures += 1
+    else:
+        print("ok   genuine 3s burst stays one moment, best frame represents it")
+
+    # 2. Contested truncation. Two media sharing a prefix both claimed one
+    #    truncated sidecar, so both silently inherited the same capture time.
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d)
+        for n in ("PXL_A_PORTRAIT-01.COVER.jpg", "PXL_A_PORTRAIT-02.COVER.jpg"):
+            (p / n).write_bytes(b"x")
+        (p / "PXL_A_PORTRAIT-0.json").write_text("{}")
+        got = takeout.match_all(takeout.scan(p))
+        if any(m.matched for m in got):
+            print("FAIL contested sidecar was awarded to "
+                  f"{[m.media.name for m in got if m.matched]}")
+            failures += 1
+        else:
+            print("ok   contested truncation withdrawn from both claimants")
+
+    # …but a single claimant must still get its truncated sidecar.
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d)
+        (p / "PXL_A_PORTRAIT-01.COVER.jpg").write_bytes(b"x")
+        (p / "PXL_A_PORTRAIT-0.json").write_text("{}")
+        got = takeout.match_all(takeout.scan(p))
+        if not got[0].matched:
+            print("FAIL unambiguous truncation should still match")
+            failures += 1
+        else:
+            print("ok   unambiguous truncation still matches")
+
+    return failures
+
+
 if __name__ == "__main__":
     import tempfile
 
@@ -125,5 +193,7 @@ if __name__ == "__main__":
     print("\n-- timestamp resolution --")
     with tempfile.TemporaryDirectory() as d:
         fails += run_timestamps(Path(d))
+    print("\n-- audit regressions --")
+    fails += run_regressions()
     print(f"\nTOTAL FAILURES: {fails}")
     sys.exit(1 if fails else 0)

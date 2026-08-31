@@ -197,9 +197,12 @@ def _placement(long_px: int, page_long_in: float, jpeg_q: float,
 
 def analyze(path: Path, page_long_in: float = 14.0) -> Metrics:
     with Image.open(path) as im:
+        w, h = im.size                      # full size, before any draft scaling
+        jpeg_q = estimate_jpeg_quality(im)  # quantization tables live in the header
+        # Ask libjpeg to decode straight to roughly the size we measure at.
+        # No-op for formats that do not support it.
+        im.draft("L", (METRIC_LONG_EDGE, METRIC_LONG_EDGE))
         im.load()
-        w, h = im.size
-        jpeg_q = estimate_jpeg_quality(im)
         g = _gray(im)
 
     gn = _normalise(g)

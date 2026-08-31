@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: photobook-curator
+Version: 0.1.0
+Summary: Curate a trip's worth of photos into a print-ready photo book
+Requires-Python: >=3.11
+Requires-Dist: numpy>=2.0
+Requires-Dist: pillow>=11.0
+Requires-Dist: pillow-heif>=0.18

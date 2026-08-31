@@ -59,6 +59,19 @@ the vendor's auto-enhance on and off, and compare previews at maximum zoom.
 python tools/make_test_target.py --trim 11x14 --bleed 0.125 --label "Mixbook"
 ```
 
+## Claude Code skill
+
+`.claude/skills/photobook/` drives the pipeline conversationally — it knows the
+stage order, the checkpoints, and how to read the output. It works from inside
+this directory as-is. To reach it from anywhere:
+
+```bash
+ln -s "$PWD/.claude/skills/photobook" ~/.claude/skills/photobook
+```
+
+The skill is convenience, not a dependency: every stage runs standalone from the
+CLI above and produces the same result.
+
 ## Tests
 
 ```bash
