@@ -1,0 +1,16 @@
+[project]
+name = "photobook-curator"
+version = "0.1.0"
+description = "Curate a trip's worth of photos into a print-ready photo book"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.0", "pillow>=11.0", "pillow-heif>=0.18"]
+
+[project.scripts]
+photobook = "photobook.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["photobook"]
