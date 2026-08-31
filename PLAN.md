@@ -300,7 +300,8 @@ Not top-N. A constrained submodular maximization:
 **Maximize** `Σ (w₁·personal_pref + w₂·technical + w₃·hero_potential) + w₄·diversity(S)`
 
 **Subject to:**
-- total photos ≈ page_budget × avg_photos_per_page (± slack)
+- total photos ≈ page count × avg_photos_per_page (± slack) — but see §6a:
+  **the page count is an output, not an input**
 - per-chapter count within [floor, ceiling] of its narrative weight
 - every named person appears ≥ K times; no person > X% of the book
 - ≥ 1 strong portrait of each person
@@ -519,7 +520,29 @@ more or less continuously, which matters far more to total cost than the test.
 For Path B specifically, Blurb publishes ICC profiles for its papers, so
 soft-proofing is free and the print test matters less.
 
-Target format: **11×14 or 12×12 layflat, 80–100 pages, ~180–220 photos.**
+Target format: **8.5×11 hardcover, standard pages, ordered on a promo.** Page
+count deliberately unset — see §6a.
+
+**Real pricing (Mixbook 8.5×11 hardcover, Aug 2026):** $15.66 for 20 pages, then
+**$1.79 per additional page**. The base is almost irrelevant; pages *are* the
+price.
+
+| Pages | List | At a typical 40% promo |
+|---|---|---|
+| 80 | $123 | ~$74 |
+| 100 | $158 | ~$95 |
+| 120 | $194 | ~$116 |
+| 140 | $230 | ~$138 |
+
+Which means "choose a cheaper tier" is mostly the wrong lever. Switching product
+lines saves little; page count and promo timing are the whole cost story. The
+12×12 layflat figure quoted in earlier drafts (~$350) was a premium line and
+should not have been the reference point.
+
+**Two thinner books often beat one brick.** Splitting 160 pages into two 80-page
+volumes costs one extra base — about $16 — and a 160-page 8.5×11 is genuinely
+unwieldy. For a long trip, Part 1 / Part 2 by region or by week is usually the
+better physical object.
 
 ---
 
@@ -571,6 +594,63 @@ source.
 cloud sync, a layout editor, or scoring-weight sliders. Every one of those
 solves a problem the application itself would create. If the selection is wrong
 the fix is rejecting things, not tuning parameters nobody has intuitions for.
+
+---
+
+## 6a. Page count is an output, not an input
+
+Earlier drafts said "80–100 pages" throughout. That was a placeholder that
+hardened into a fake requirement through repetition. It is wrong for two
+reasons: it does not scale with the trip, and it asks for a number nobody can
+estimate before seeing the photos.
+
+**What a bigger archive actually implies.** 2,000 frames → ~2.5:1 burst collapse
+→ ~750 distinct moments → minus quality rejects → ~600 usable → of which
+genuinely book-worthy and non-redundant, roughly **250–350**. At ~2.5 photos per
+page, 80 pages holds about 200. So for a trip that size, 80 pages leaves
+something like a hundred book-worthy moments out; 100–120 is the honest range.
+
+**But more pages is not free in quality terms.** A 200-photo book where
+everything earns its place beats a 350-photo book. The reason this project
+exists is that 2,000 photos is unlookable-at — a 350-photo book is a smaller
+unlookable pile. This is a genuine tradeoff and it belongs to the user, not to a
+default.
+
+### The curve
+
+The greedy selector already produces a complete ordering by marginal value, so
+the curve costs nothing extra to report:
+
+```
+pages  photos  weakest photo   marginal cost
+  60     150      0.81            —
+  80     200      0.72          +$36
+ 100     250      0.61          +$36
+ 120     300      0.43  ←        +$36    quality falls off here
+ 140     350      0.28          +$36
+```
+
+The preview shows the actual spread of *what you would be adding* between two
+levels, so the decision is made while looking at the photos in question rather
+than at a number.
+
+### The floor is a different question from the curve
+
+Independent of taste, the trip's structure sets a hard minimum: chapters × their
+minimum page allocation, plus per-person coverage. The optimizer reports it
+separately — "below 76 pages a chapter drops under its floor" is a constraint
+violation, not a preference, and the two should never be presented as the same
+kind of statement.
+
+**Default: unset.** The first run reports the curve and the floor and asks.
+
+### One consequence for the artifacts
+
+At 2,000 photos, `all-photos.html` with every thumbnail embedded is a ~40MB
+single file — slow to open and pointless. The distinction the earlier draft
+missed: **`proof.html` embeds its images because it travels** (you email it to
+the people you went with); **`all-photos.html` references files on disk because
+it never leaves the machine.** Costs nothing and scales indefinitely.
 
 ---
 
