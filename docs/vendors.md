@@ -23,10 +23,27 @@ Sources: [PetaPixel](https://petapixel.com/best-photo-book-services/),
 [PhotoWorkout](https://www.photoworkout.com/best-photo-book-printing-services/),
 [Reviewed](https://www.reviewed.com/home-outdoors/best-right-now/best-photo-books).
 
-**None of these has a public API or a bulk layout-import format.** Automation
-stops at "upload a folder of correctly-ordered, correctly-named files and let
-auto-flow place them." That is still a large win — the ordering and the selection
-are the hard parts.
+**None of these has a public API or a bulk layout-import format.** But automation
+does *not* have to stop at "upload an ordered folder and let auto-flow place it":
+
+> **Spread-as-image.** Render each page as a single flattened, full-bleed image at
+> the vendor's exact trim + bleed size, then place one image per page. Every
+> consumer editor supports a one-photo full-bleed page. This reproduces your own
+> layout pixel-exactly inside Mixbook or Printique, at their print quality.
+
+Vendor-selection criteria therefore gain three rows, all of which must be
+confirmed on the test print:
+
+- **Auto-enhance can be turned off on upload.** Otherwise the vendor re-grades
+  your composited pages and the whole point is lost. Non-negotiable.
+- **A true full-bleed single-image page exists** at the chosen trim size, with a
+  published bleed spec.
+- **Spread handling** — either a true spread slot, or clean splitting at trim into
+  left/right pages. Layflat binding makes this dramatically easier: no gutter loss,
+  no faces disappearing into the fold.
+
+Mixbook and Printique both look viable on the first two; the third is the one to
+verify with a real order.
 
 ---
 
@@ -57,6 +74,9 @@ stage around a document model rather than around a vendor.
 - **Before ordering:** print an identical 3-spread test — one high-contrast
   landscape, one skin-tone-heavy group shot, one low-light indoor — at your top
   two vendors. ~$60, settles vendor choice and colour profiling for years.
+- **What the test actually tests:** vendor choice, colour profiling, *and*
+  whether spread-as-image survives their upload pipeline. Upload one spread the
+  normal way and the same spread as a flattened page image, then compare.
 - **Colour management:** export sRGB unless the vendor publishes an ICC profile;
   soft-proof the dark spreads. Print is consistently darker than a monitor —
   a global +1/3 to +1/2 stop on shadow-heavy images is a normal correction.
@@ -80,5 +100,13 @@ originals at all.
   rewrites embedded EXIF on upload). Filename↔sidecar matching is inconsistent
   (`IMG123.jpg.json` vs `IMG123.json`, truncation, `-edited` variants) and needs
   a real matcher, not a naive join.
-- **Storage Saver** accounts hold recompressed images. Check actual pixel
-  dimensions before trusting anything for a full-bleed page.
+- **Storage Saver** caps at 16 MP ≈ 4608×3456 — which is 15.4″ × 11.5″ at 300 DPI,
+  so a full-bleed 11×14 page is fine on pixel count alone. The real exposure is
+  cropped shots, legacy *Express quality* (~5 MP) uploads, and JPEG recompression
+  artifacts, which show in skies and skin gradients in print far more than on
+  screen. Check pixel dimensions *and* the account's current upload-quality
+  setting at ingest.
+- **Practical ingest recipe when Google Photos is the only copy:** put the trip in
+  one album, then Takeout → Google Photos → deselect all → that album only. One
+  manageable archive of originals plus sidecars, no 2,000-item Picker cap, no
+  60-minute URL expiry, no derivative resolution loss.

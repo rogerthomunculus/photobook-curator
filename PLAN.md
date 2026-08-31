@@ -1,6 +1,14 @@
-# Photobook Curator — Design Plan (v0.1)
+# Photobook Curator — Design Plan (v0.2)
 
 **Status:** planning only. Nothing built. Open questions at the bottom.
+
+## Decisions locked (round 1)
+
+| Question | Answer | What it changes |
+|---|---|---|
+| Automation ambition | **Both — assisted path first** | The layout engine is built around a `book.json` document model from day one; the automated order path becomes a later exporter, not a rewrite |
+| Photo source | **Google Photos is the only copy** | Album-scoped Takeout becomes the *primary* Phase 0 ingest, not a Phase 3 fallback. The sidecar matcher is now critical path |
+| Text in the book | **Light labels** — chapter titles, dates, place names | Adds a text-page template per chapter plus an *offline* reverse geocoder; no prose-review step |
 
 **The job:** one trip → ~1,000–2,000 photos in Google Photos → a printed photo book
 that is worth keeping, with as little human slog as possible.
@@ -28,18 +36,37 @@ The three surviving paths:
 | **Google Takeout / Data Portability API** | Full-fidelity originals + `.json` sidecars with the real `photoTakenTime`, GPS, descriptions | Async archive job, multi-GB, notoriously messy filename↔sidecar matching, latency measured in hours |
 | **Local folder** | Whatever is on disk / phone backup / an existing Takeout | Nothing — it just works |
 
-**Design consequence:** the app's core must be a **local-folder pipeline** with a
-pluggable `Source` interface. Ship `LocalFolder` first, add `GooglePhotosPicker`
-second, `Takeout` third. Do not build the system around a cloud API that can be
-deprecated out from under it again — it already happened once.
+**Design consequence — and Google Photos is the only copy, so this is now the
+critical path.** The core is a local-folder pipeline behind a pluggable `Source`
+interface, and the way photos reach that folder is:
 
-**Print-quality consequence:** if the Google account is on *Storage Saver*, the
-stored images are already recompressed and may be ~16MP-capped. Picker `baseUrl`
-downloads are derivatives on top of that. For a full-bleed 11×14 page you want
-≥ 300 DPI at placement size. So: **an explicit DPI budget check per placement**,
-and a warning when a photo can only be used small. This is a real risk of the
-Picker path and a strong argument for Takeout or original phone files for the
-"hero" images.
+> **Album-scoped Takeout.** In Google Photos, put the trip in one album (the
+> auto-generated trip memory usually already is one). Then Takeout → Google
+> Photos → *deselect all* → select that album only. You get ~1,200 originals plus
+> sidecars in one archive instead of a multi-hundred-GB whole-library export.
+
+That is a ten-minute manual chore once per trip, and in exchange it removes the
+2,000-item Picker cap, the 60-minute URL expiry, the derivative-resolution
+problem, and all future API-deprecation risk at once. **Recommended primary
+ingest.** The Picker API stays on the roadmap as a convenience layer for
+browsing and for a future multi-user version, not as the way bytes arrive.
+
+Worth checking whether the **Data Portability API** exposes a Photos resource
+group that can initiate that same album export programmatically — if it does,
+the manual step disappears. Unverified; treat as a spike, not a dependency.
+
+**Print-resolution reality check** (better news than expected). *Storage Saver*
+caps at 16 MP ≈ 4608×3456, which at 300 DPI is 15.4″ × 11.5″ — enough for a
+full-bleed 11×14 page. So the pixel-count worry is smaller than it first looks.
+The three cases that genuinely bite:
+- heavily **cropped** shots, which fall below the DPI floor fast;
+- legacy *Express quality* uploads (~5 MP);
+- Storage Saver's JPEG **recompression**, which shows up in skies and skin
+  gradients in print far more than on a screen.
+
+So keep the **DPI budget as a hard constraint per placement**, add a
+recompression-artifact check on shortlisted heroes, and confirm the account's
+current upload-quality setting during ingest.
 
 ### 1.2 No consumer photo-book vendor has a public API
 
@@ -60,9 +87,36 @@ So "submit an order" forks into two genuinely different products:
   layflat + ProLine paper is genuinely good, capped at **110 pages**.
 
 **Design consequence:** build the layout engine to emit a **document model**
-(JSON), then render that model to *both* a proof PDF and a print PDF. Path A and
-Path B become two exporters over one engine, not two products. Ship A, keep B one
-flag away.
+(`book.json`), then render that model to *both* a proof PDF and a print PDF. Path
+A and Path B become two exporters over one engine, not two products. Ship A, keep
+B one flag away. (This is the locked decision — "both, A first".)
+
+### The trick that nearly collapses the A/B fork
+
+Path A as described gives up layout control: you upload an ordered set and let
+the vendor's auto-flow place it, then nudge. But there is a better move —
+**export each page as a single flattened, full-bleed image at the vendor's exact
+trim + bleed dimensions, and place one image per page.** Every consumer editor
+supports a one-photo full-bleed page. That gets you *pixel-exact* reproduction of
+your own layout inside Mixbook or Printique, with their print quality.
+
+Same renderer, three targets:
+
+| Target | Output | Vendor |
+|---|---|---|
+| Proof | Screen PDF | — |
+| Path A | Flattened per-page images at trim+bleed | Mixbook / Printique |
+| Path B | Print PDF with real bleed and ICC | Blurb / Lulu / Peecho |
+
+Caveats to validate on the test print: **turn off the vendor's auto-enhance /
+auto-correct on upload** or it will re-grade your composited pages; text becomes
+raster (fine at 300 DPI, but no vendor spellcheck); and a full-spread image has
+to be split at the exact trim into left and right pages unless the vendor offers
+a true spread slot. Layflat binding makes this much easier — no gutter loss.
+
+If this works, Path A stops being a compromise, and Path B becomes purely about
+who prints it rather than how much control you keep. **Validate it on the $60
+test print before building the rest of the layout engine.**
 
 ---
 
@@ -109,6 +163,13 @@ re-runnable in isolation. Nothing is destructive.
 - **Multi-photographer merge with clock-skew correction**: two phones will be
   minutes apart. Estimate per-device offset by aligning GPS tracks, then merge
   into one timeline. Without this, chaptering and burst detection break.
+- **Takeout sidecar matcher** — now critical path, not a nicety. Google strips or
+  rewrites embedded EXIF on upload, so the `.json` sidecar is the *authoritative*
+  source for capture time and GPS. Matching is inconsistent and needs a real
+  resolver, not a naive join: `IMG123.jpg.json` vs `IMG123.json`, 51-char
+  filename truncation, `-edited` variants, `(1)` collision suffixes, and
+  live-photo pairs. Build it with a fixture set of the ugly cases and test it —
+  a silent mismatch here corrupts the timeline and therefore every chapter.
 - Junk pre-filter: screenshots (no EXIF camera + device-screen dimensions),
   receipts/documents/whiteboards, accidental pocket shots.
 
@@ -172,6 +233,11 @@ Two warnings that matter more than model choice:
 - Detect **motifs** across chapters (recurring subject, colour, "kid asleep in a
   different vehicle every day") — motifs make a book feel authored rather than
   chronological.
+- **Place names, offline.** Locked decision: the book carries light labels —
+  chapter title, date range, place name. Reverse-geocode from a local GeoNames
+  extract rather than a web API, so the pipeline stays offline and reproducible
+  and place names don't silently change between runs. Resolve to the level a
+  human would say ("Lake Bled", not "Bled, Upper Carniola, Slovenia").
 - Emit a **beat sheet**: chapter list, weight (share of pages) proportional to
   moment-count with damping so a 400-photo beach day doesn't eat the book.
 
@@ -203,7 +269,9 @@ suspicious.
 ### Stage 7 — Layout
 - **Spread grammar** — a small vocabulary of templates: full-bleed hero, hero+3
   supporting, symmetric 2-up, 3-up detail strip, 6-up grid, single-with-whitespace,
-  text/quote page.
+  and a **chapter-opener text page** carrying title, date range and place name
+  (the locked "light labels" decision). Type is set once, in the engine — pick two
+  faces and a scale and never touch it again.
 - **Pacing**: a scored sequence problem, not a per-page one. Alternate density,
   never three grids in a row, open each chapter on a hero, close on something
   quiet. Score candidate sequences on rhythm + colour continuity between facing
@@ -292,10 +360,18 @@ Target format: **11×14 or 12×12 layflat, 80–100 pages, ~180–220 photos.**
 
 ## 6. Phasing
 
-**Phase 0 — "Is this even useful?" (a weekend).** Local folder in → ingest,
-technical quality, dedupe/bursts → a contact sheet of the top 300 with reasons.
-No ML beyond OpenCV, no UI beyond an HTML file. If this doesn't already feel
-useful, the plan is wrong and we should find out for $0.
+**Phase 0 — "Is this even useful?" (a weekend).** Album-scoped Takeout in →
+sidecar matcher, ingest, technical quality, dedupe/bursts → a contact sheet of the
+top 300 with reasons. No ML beyond OpenCV, no UI beyond an HTML file. If this
+doesn't already feel useful, the plan is wrong and we should find out for $0.
+**Do the Takeout of last year's trip now** — it is the only step with a real
+wall-clock delay, and it derisks the whole ingest story before any code exists.
+
+**Phase 0.5 — the $60 test print (runs in parallel).** Composite three test
+spreads by hand, upload them as flattened full-bleed page images to Mixbook and
+Printique with auto-enhance disabled, and order both. This answers the single
+biggest open technical question — whether spread-as-image works — plus vendor
+choice and colour profiling, before the layout engine is written.
 
 **Phase 1 — The brain.** Embeddings, face clustering, VLM captions, chaptering,
 the constrained selector, the preference calibration session, the review UI.
@@ -305,7 +381,7 @@ This is where the product actually lives.
 proof PDF, ordered export for Path A. First real book ordered from Mixbook.
 
 **Phase 3 — Automation & polish.** Print PDF + Blurb/Lulu API ordering, Google
-Photos Picker source, captions/text drafting, multi-year memory.
+Photos Picker source, the Data Portability API spike, multi-year memory.
 
 ---
 
@@ -322,19 +398,22 @@ Photos Picker source, captions/text drafting, multi-year memory.
 
 ---
 
-## 8. Open questions for you
+## 8. Open questions — round 2
 
-1. **Ingest**: are the trip photos also on a phone/laptop as originals, or is
-   Google Photos genuinely the only copy? Changes Phase 0 substantially.
-2. **Who's in the book** — one household, or multi-family trips? Drives how hard
-   the fairness constraints need to be.
-3. **Text**: captions, dates, place names, short narrative? Or photos only? The
-   VLM can draft all of it, but it changes the layout grammar.
-4. **Videos / Live Photos**: extract stills and treat as photos, or ignore?
-5. **Automation ambition**: is "app hands me a curated set + proof, I finish in
-   Mixbook" the win — or is a fully hands-off "one command → book on my doorstep"
-   the actual goal? This is the single biggest fork in the plan.
-6. **Budget/format**: 80 pages at ~$150, or the big 12×12 layflat at ~$350?
-7. Is this **just for you**, or eventually something other people use? Multi-user
-   changes the auth/hosting story completely — and makes the Google Photos
-   Picker path mandatory rather than optional.
+Answered in round 1: automation ambition (both, A first), source (Google Photos
+only), text (light labels). Still open:
+
+1. **Who's in the book** — one household, or multi-family trips? Drives how hard
+   the fairness constraints in Stage 6 need to be, and whether face clusters need
+   to survive people appearing in some years and not others.
+2. **Videos / Live Photos**: extract stills and treat them as photos, or ignore
+   them? Live Photos in particular often hide the better frame.
+3. **Budget and format**: 80 pages at ~$150, or the big 12×12 layflat at ~$350?
+   Page budget is a direct input to the selection optimizer, so this is a real
+   parameter rather than a preference.
+4. **Just you?** Multi-user changes auth and hosting completely — and makes the
+   Picker path mandatory rather than optional, since you can't ask strangers to
+   run Takeout.
+5. **How many trips of backlog?** If there are five years of past trips sitting in
+   Google Photos, the preference-calibration model gets much better much faster,
+   and "catch-up mode" becomes a feature worth designing for.
