@@ -9,6 +9,7 @@
 | Automation ambition | **Both — assisted path first** | The layout engine is built around a `book.json` document model from day one; the automated order path becomes a later exporter, not a rewrite |
 | Photo source | **Google Photos is the only copy** | Album-scoped Takeout becomes the *primary* Phase 0 ingest, not a Phase 3 fallback. The sidecar matcher is now critical path |
 | Text in the book | **Light labels** — chapter titles, dates, place names | Adds a text-page template per chapter plus an *offline* reverse geocoder; no prose-review step |
+| Backup quality | **Storage Saver** (confirmed) | There is no original to fall back to for *any* photo. DPI becomes a tiered soft constraint rather than a 300 DPI gate, recompression detection joins Stage 1, and the pipeline must never re-encode |
 
 **The job:** one trip → ~1,000–2,000 photos in Google Photos → a printed photo book
 that is worth keeping, with as little human slog as possible.
@@ -55,18 +56,57 @@ Worth checking whether the **Data Portability API** exposes a Photos resource
 group that can initiate that same album export programmatically — if it does,
 the manual step disappears. Unverified; treat as a spike, not a dependency.
 
-**Print-resolution reality check** (better news than expected). *Storage Saver*
-caps at 16 MP ≈ 4608×3456, which at 300 DPI is 15.4″ × 11.5″ — enough for a
-full-bleed 11×14 page. So the pixel-count worry is smaller than it first looks.
-The three cases that genuinely bite:
-- heavily **cropped** shots, which fall below the DPI floor fast;
-- legacy *Express quality* uploads (~5 MP);
-- Storage Saver's JPEG **recompression**, which shows up in skies and skin
-  gradients in print far more than on a screen.
+### 1.1a Storage Saver is confirmed — what that actually costs
 
-So keep the **DPI budget as a hard constraint per placement**, add a
-recompression-artifact check on shortlisted heroes, and confirm the account's
-current upload-quality setting during ingest.
+The account is on Storage Saver, so this is settled fact rather than a risk to
+manage. Three consequences, in order of how much they matter.
+
+**Pixel count is mostly fine.** Storage Saver resizes anything above 16 MP down
+to 16 MP and re-encodes everything; a 12 MP phone photo keeps its 4032×3024
+dimensions and is only recompressed. Long edge at a given density:
+
+| Source | Pixels | 300 DPI | 240 DPI | 200 DPI |
+|---|---|---|---|---|
+| 12 MP phone, uncropped | 4032×3024 | 13.4″ | 16.8″ | 20.2″ |
+| 16 MP cap (48/50 MP resized) | 4619×3464 | 15.4″ | 19.2″ | 23.1″ |
+| 12 MP cropped to half area | 2851×2138 | 9.5″ | 11.9″ | 14.3″ |
+| 12 MP cropped to a quarter | 2016×1512 | 6.7″ | 8.4″ | 10.1″ |
+| 1080p video / Live Photo frame | 1920×1080 | 6.4″ | 8.0″ | 9.6″ |
+
+A full-bleed 11×14 needs 14″, so an uncropped phone shot lands at ~288 DPI —
+visually indistinguishable from 300 at arm's length. **So drop the hard 300 DPI
+gate**; it would reject usable photos. Use tiers instead: 300+ preferred, 240
+fine, **200 the floor for a full-bleed page**, below 180 restricted to a quarter
+page or smaller. DPI becomes a placement-size-aware ranking term with a hard
+floor, not a binary filter.
+
+**Crops and video frames are the real limit.** A half-area crop can still carry a
+full-bleed page; a quarter-area crop cannot, and Storage Saver also caps video at
+1080p, so any still pulled from a video or Live Photo is a ~2 MP asset — small
+placements only. Worth knowing before we decide whether to mine Live Photos at all.
+
+**Recompression is the genuine loss, and it's unrecoverable.** Google re-encoded
+every one of these files once already. That shows up as banding in skies and
+mottling in skin gradients — far more visible in print than on screen. Two
+responses:
+
+- **Detect it in Stage 1.** JPEG quantization tables are readable straight from
+  the file, so we can estimate the encoder's quality setting, spot Google's own
+  encoder signature, and flag heavy blocking or banding. Cheap, deterministic,
+  and it tells us which photos should never carry a large placement even though
+  their pixel count says they could. It also identifies any photos predating the
+  switch to Storage Saver, which Google does *not* retroactively compress — so
+  the archive is probably mixed, and the pipeline should measure per photo rather
+  than assume.
+- **Never re-encode.** Every subsequent JPEG save compounds the artifacts already
+  baked in. Decode once, work in lossless intermediates, and encode exactly once
+  at the end — PNG or maximum-quality JPEG for the spread-as-image export. This
+  matters much more on a Storage Saver archive than it would on originals.
+
+And it removes a mitigation the earlier draft leaned on: **there is no original
+anywhere to fetch for a hero image.** What Takeout delivers is the best that will
+ever exist. It also sharpens the case for disabling vendor auto-enhance, since
+their sharpening will amplify existing JPEG artifacts rather than reveal detail.
 
 ### 1.2 No consumer photo-book vendor has a public API
 
@@ -183,8 +223,13 @@ Cheap, deterministic, explainable. Runs on everything.
   matters more than the choice of metric.
 - Exposure: clipped-highlight and crushed-shadow fraction, histogram spread.
 - Noise estimate; motion-blur direction (distinguishes camera shake from intentional pan).
-- Resolution → **max printable size at 300/240/180 DPI**. Stored as a hard
-  constraint for the layout engine.
+- Resolution → **max printable size at 300/240/200 DPI**, stored as a tiered
+  constraint for the layout engine (see §1.1a — a hard 300 DPI gate would reject
+  usable Storage Saver photos).
+- **Recompression estimate** — JPEG quantization-table analysis plus blocking and
+  banding metrics. On a Storage Saver archive this is as important as sharpness:
+  it separates photos that merely *look* big enough from photos that will
+  actually hold up as a full-bleed page.
 - Face-aware checks: face detect → per-face sharpness, **eyes-closed / blink
   detection**, gaze direction, and (for group shots) "how many faces are
   simultaneously acceptable." A blink in the only group photo of the trip is the
@@ -421,7 +466,7 @@ Photos Picker source, the Data Portability API spike, multi-year memory.
 | Risk | Mitigation |
 |---|---|
 | "Good" is subjective and the model will be confidently wrong | Preference calibration + review UI with locks; the app proposes, you decide |
-| Storage-Saver / Picker images too low-res for large prints | DPI budget as a hard constraint; prefer originals for heroes; warn early |
+| Storage Saver recompression (confirmed, unrecoverable) | Detect via quantization tables in Stage 1 and cap placement size accordingly; never re-encode in our own pipeline; disable vendor auto-enhance. There is no original to fall back to |
 | Google changes API access again | Local-folder core, sources are plugins |
 | Auto-layout produces subtly ugly spreads | Small hand-designed template vocabulary beats free-form placement; proof PDF before ordering |
 | Face data leaving the machine | Face clustering is fully local; VLM pass is opt-out and can be run on crops-free thumbnails |
