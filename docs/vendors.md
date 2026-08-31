@@ -71,12 +71,28 @@ stage around a document model rather than around a vendor.
 - **Book 1:** Path A → **Mixbook**, 11×14 or 12×12 layflat, 80–100 pages.
 - **Keep Path B warm:** design the PDF renderer against **Blurb layflat specs**
   (≤110 pages fits the target anyway).
-- **Before ordering:** print an identical 3-spread test — one high-contrast
-  landscape, one skin-tone-heavy group shot, one low-light indoor — at your top
-  two vendors. ~$60, settles vendor choice and colour profiling for years.
-- **What the test actually tests:** vendor choice, colour profiling, *and*
-  whether spread-as-image survives their upload pipeline. Upload one spread the
-  normal way and the same spread as a flattened page image, then compare.
+- **Don't buy a $60 bake-off.** Separate the questions by what they actually
+  cost to answer:
+  - *Does the vendor re-grade or resample my pages?* — **free**. Upload a test
+    target twice, auto-enhance on and off, compare previews at max zoom; and ask
+    support in writing, they answer.
+  - *Does spread-as-image survive to paper?* — **~$20**, the cheapest softcover
+    on promo. Upload processing doesn't vary across a vendor's product line, so
+    a cheap book answers this as well as an expensive one.
+  - *How does their paper render shadows and skin?* — **$0 extra**, folded into
+    book one by making three or four of its pages flattened spread-images.
+  - Skip the second vendor. It's the expensive half, the reviews give a
+    defensible default, and switching in year two costs nothing.
+- **Never pay list price.** These vendors discount 40–50% more or less
+  continuously; timing the order matters more to total spend than any test.
+- **Free substitutes worth using:** Blurb publishes ICC profiles for its papers
+  (free soft-proofing, relevant to Path B), and several vendors send free or
+  near-free paper swatch and sample kits — no help on your own images, but they
+  settle paper and binding questions for nothing.
+- **Printique's own quirk:** their books are bound true photographic prints
+  rather than press sheets, so a single 8×10 print (~$3) is an unusually good
+  proxy for one of their book pages. That shortcut does *not* transfer to
+  press-printed vendors like Mixbook.
 - **Colour management:** export sRGB unless the vendor publishes an ICC profile;
   soft-proof the dark spreads. Print is consistently darker than a monitor —
   a global +1/3 to +1/2 stop on shadow-heavy images is a normal correction.

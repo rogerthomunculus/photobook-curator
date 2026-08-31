@@ -115,8 +115,10 @@ to be split at the exact trim into left and right pages unless the vendor offers
 a true spread slot. Layflat binding makes this much easier — no gutter loss.
 
 If this works, Path A stops being a compromise, and Path B becomes purely about
-who prints it rather than how much control you keep. **Validate it on the $60
-test print before building the rest of the layout engine.**
+who prints it rather than how much control you keep. **Validate it before building
+the rest of the layout engine** — and cheaply: most of the caveats above show up
+in the vendor's own on-screen preview at maximum zoom, for free. See the tiered
+validation in §6, Phase 0.5.
 
 ---
 
@@ -349,10 +351,22 @@ Everything except the VLM pass runs locally and offline.
 - **Shutterfly**: cheapest with promos, but 2026 reviews repeatedly flag
   inconsistent trim and weaker colour. Skip.
 
-**Before the real order:** print the same 3 test spreads (one high-contrast, one
-skin-tone-heavy, one dark/night) at your top two vendors. ~$60 total, and it
-settles both vendor choice and how to profile colour. Do this once; reuse the
-answer for years.
+**Validation, cheaply.** An earlier draft called for ~$60 of test books across two
+vendors. That's the wrong trade — the three questions have very different prices:
+
+| Question | Substrate-dependent? | Cheapest honest answer |
+|---|---|---|
+| Does the vendor re-grade or resample my flattened pages? | No | **$0** — upload a test target, compare previews with auto-enhance on and off, and ask support directly |
+| Does spread-as-image survive to paper? | No — upload processing is the same across their product line | **~$20** — the cheapest softcover they sell, on promo |
+| How does *their paper* render my shadows and skin tones? | Yes | **$0 extra** — fold it into book one |
+
+And drop the two-vendor bake-off. It's the expensive half, the published reviews
+already give a defensible default, and if book one disappoints you switch next
+year having lost nothing. **Never pay list price** — these vendors run 40–50% off
+more or less continuously, which matters far more to total cost than the test.
+
+For Path B specifically, Blurb publishes ICC profiles for its papers, so
+soft-proofing is free and the print test matters less.
 
 Target format: **11×14 or 12×12 layflat, 80–100 pages, ~180–220 photos.**
 
@@ -367,11 +381,28 @@ doesn't already feel useful, the plan is wrong and we should find out for $0.
 **Do the Takeout of last year's trip now** — it is the only step with a real
 wall-clock delay, and it derisks the whole ingest story before any code exists.
 
-**Phase 0.5 — the $60 test print (runs in parallel).** Composite three test
-spreads by hand, upload them as flattened full-bleed page images to Mixbook and
-Printique with auto-enhance disabled, and order both. This answers the single
-biggest open technical question — whether spread-as-image works — plus vendor
-choice and colour profiling, before the layout engine is written.
+**Phase 0.5 — validation, tiered (runs in parallel).** Buy the cheapest answer to
+each question, not one expensive answer to all three:
+
+- **Tier 0 — free, do it today.** Composite a test target (resolution wedges, a
+  grey ramp, a fine grid, a skin-tone patch) into one page image at Mixbook's
+  exact trim + bleed. Upload it twice, auto-enhance on and off, and compare the
+  previews at maximum zoom. Catches trim misalignment, resampling, and whether
+  auto-enhance is applied at upload — the failure modes that would sink
+  spread-as-image. Ask their support the same questions in writing; it costs
+  nothing and they answer.
+- **Tier 1 — ~$20, only if Tier 0 is ambiguous.** The cheapest softcover Mixbook
+  sells, on promo, containing the test target plus one normal spread and one
+  flattened spread. Upload processing doesn't change across their product line,
+  so a cheap book answers the technical question as well as an expensive one.
+- **Tier 2 — $0 extra.** Fold the paper-and-colour question into **book one**:
+  build it mostly as normal placements but make three or four pages flattened
+  spread-images. One order answers both, and the shadow-lift correction it
+  teaches you is reusable for every year after.
+
+What you give up: book one may come back with slightly dark shadows. That's a
+recoverable mistake next year, not a disaster — and cheaper than $60 of test
+books to prevent it.
 
 **Phase 1 — The brain.** Embeddings, face clustering, VLM captions, chaptering,
 the constrained selector, the preference calibration session, the review UI.
