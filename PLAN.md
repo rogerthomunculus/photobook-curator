@@ -1,6 +1,8 @@
 # Photobook Curator — Design Plan (v0.2)
 
-**Status:** planning only. Nothing built. Open questions at the bottom.
+**Status:** Phase 0 is built and tested against a synthetic archive (see
+[docs/phase0.md](docs/phase0.md) for what changed once it met Python). Phases
+1–3 are designed, not written. Open questions at the bottom.
 
 ## Decisions locked (round 1)
 
