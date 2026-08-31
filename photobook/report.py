@@ -74,16 +74,58 @@ def _table(headers: list[str], rows: list[tuple]) -> str:
     return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
-def triage_html(rows: list, out: Path) -> Path:
+SIDECAR_FORMS = (
+    (".supplemental-metadata.json", "name.ext.supplemental-metadata.json"),
+    (".supplemental-meta.json", "name.ext.supplemental-meta.json (truncated tail)"),
+    (".supplemental.json", "name.ext.supplemental.json (truncated tail)"),
+    (".suppl.json", "name.ext.suppl.json (truncated tail)"),
+)
+STORAGE_SAVER_MP = 16.0     # the documented Storage Saver ceiling
+FULL_BLEED_FLOOR = 200      # dpi; see PLAN.md 1.1a
+
+
+def _sidecar_form(path: str) -> str:
+    """Which spelling of the sidecar name this is.
+
+    The matcher strips these tails before comparing, so every form reports as
+    `exact` — which is correct behaviour but useless for telling what Google
+    actually wrote. Recovered here from the filename.
+    """
+    low = path.lower()
+    for suffix, label in SIDECAR_FORMS:
+        if low.endswith(suffix):
+            return label
+    return "name.ext.json" if low.count(".") > 1 else "name.json"
+
+
+def triage_html(rows: list, out: Path, page_long_in: float = 14.0) -> Path:
     """Archive shape: what arrived, what matched, what we can't date or print."""
     n = len(rows)
     images = [r for r in rows if r.kind == "image"]
     matched = [r for r in rows if r.sidecar_path]
     low_conf = [r for r in rows if r.sidecar_path and r.sidecar_conf < 0.8]
     undated = [r for r in rows if r.taken_utc is None]
+    rough = [r for r in rows if r.tz_source in ("longitude", "none")
+             and r.taken_utc is not None]
     strategies = Counter(r.sidecar_strategy.split(":")[0] for r in rows)
+    forms = Counter(_sidecar_form(r.sidecar_path) for r in matched)
     tz = Counter(r.tz_source for r in rows)
+    cameras = Counter(r.camera or "(no camera in EXIF)" for r in rows)
     dims = Counter(f"{r.width}×{r.height}" for r in images if r.width)
+
+    dated = [r for r in rows if r.taken_local]
+    span = ""
+    if dated:
+        lo = min(r.taken_local for r in dated)
+        hi = max(r.taken_local for r in dated)
+        days = (hi.date() - lo.date()).days + 1
+        span = f"{lo:%-d %b} – {hi:%-d %b %Y} ({days} days)"
+
+    sized = [r for r in images if r.width and r.height]
+    over_cap = [r for r in sized if r.width * r.height / 1e6 > STORAGE_SAVER_MP]
+    need_px = page_long_in * FULL_BLEED_FLOOR
+    short = [r for r in sized if max(r.width, r.height) < need_px]
+    portrait = [r for r in sized if r.height > r.width]
 
     parts = [
         f"<style>{CSS}</style><h1>Takeout triage</h1>",
@@ -92,25 +134,47 @@ def triage_html(rows: list, out: Path) -> Path:
         "contact with reality.</p>",
         '<div class="stats">',
         _stat("media files", n),
+        _stat("date range", span or "unknown"),
         _stat("sidecars matched", f"{len(matched)}/{n}"),
-        _stat("low confidence", len(low_conf)),
+        _stat("rough timestamps", len(rough)),
         _stat("no capture time", len(undated)),
-        _stat("distinct sizes", len(dims)),
+        _stat("too small to print big", len(short)),
         "</div>",
         "<h2>How each sidecar was matched</h2>",
         _table(["strategy", "files"],
                sorted(strategies.items(), key=lambda kv: -kv[1])),
+        "<h2>What Google named the sidecars</h2>",
+        _table(["filename form", "files"],
+               sorted(forms.items(), key=lambda kv: -kv[1])),
         "<h2>Where the local timestamp came from</h2>",
         _table(["source", "files"], sorted(tz.items(), key=lambda kv: -kv[1])),
+        "<h2>Devices</h2>",
+        _table(["camera", "files"], sorted(cameras.items(), key=lambda kv: -kv[1])[:15]),
+        "<h2>Resolution and print headroom</h2>",
+        _table(["measure", "files"], [
+            (f"above the {STORAGE_SAVER_MP:.0f} MP Storage Saver ceiling "
+             "(so NOT downsized)", len(over_cap)),
+            (f"at or below {STORAGE_SAVER_MP:.0f} MP", len(sized) - len(over_cap)),
+            (f"under {FULL_BLEED_FLOOR} dpi for a full-bleed "
+             f'{page_long_in:g}" page', len(short)),
+            ("portrait orientation", len(portrait)),
+            ("landscape orientation", len(sized) - len(portrait)),
+        ]),
         "<h2>Pixel dimensions</h2>",
-        _table(["dimensions", "files"],
-               sorted(dims.items(), key=lambda kv: -kv[1])[:20]),
+        _table(["dimensions", "megapixels", "long edge at 300 dpi", "files"],
+               [(d, f"{int(d.split('×')[0]) * int(d.split('×')[1]) / 1e6:.1f} MP",
+                 f'{max(int(x) for x in d.split("×")) / 300:.1f}"', c)
+                for d, c in sorted(dims.items(), key=lambda kv: -kv[1])[:20]]),
     ]
-    if undated or low_conf:
+    attention = (
+        [(r.filename, r.notes or "no sidecar matched") for r in undated]
+        + [(r.filename, f"low-confidence sidecar: {r.sidecar_strategy}") for r in low_conf]
+        + [(r.filename, f"timestamp from {r.tz_source} — can be two hours out, "
+                        "enough to move it into the wrong day") for r in rough]
+    )
+    if attention:
         parts.append("<h2>Needs a human look</h2>")
-        parts.append(_table(
-            ["file", "problem"],
-            [(r.filename, r.notes or "unmatched") for r in (undated + low_conf)][:80]))
+        parts.append(_table(["file", "problem"], attention[:80]))
 
     out.write_text("".join(parts), encoding="utf-8")
     return out

@@ -33,7 +33,7 @@ def cmd_triage(args) -> int:
     t0 = time.time()
     rows = ingest_dir(root)
     out = Path(args.out or root / "triage.html")
-    report.triage_html(rows, out)
+    report.triage_html(rows, out, page_long_in=args.page_inches)
 
     matched = sum(1 for r in rows if r.sidecar_path)
     undated = [r for r in rows if r.taken_utc is None]
@@ -175,9 +175,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--out", help="output path for reports")
         p.set_defaults(func=fn)
 
-    sub.choices["analyze"].add_argument(
-        "--page-inches", type=float, default=14.0,
-        help="long edge of the book page in inches (default 14, i.e. 11x14)")
+    for cmd in ("triage", "analyze"):
+        sub.choices[cmd].add_argument(
+            "--page-inches", type=float, default=14.0,
+            help="long edge of the book page in inches (default 14, i.e. 11x14)")
     sub.choices["analyze"].add_argument(
         "--force", action="store_true", help="re-analyse images already scored")
     sub.choices["sheet"].add_argument("--limit", type=int, default=400)
