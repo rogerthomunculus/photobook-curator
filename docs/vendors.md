@@ -47,6 +47,38 @@ verify with a real order.
 
 ---
 
+## 1a. Professional photo labs — the category I originally missed
+
+Between consumer services (great quality, no API) and print-on-demand (API,
+POD quality) sits the trade: labs serving wedding and portrait photographers,
+who order albums at volume and therefore *need* automation. They have real
+APIs because their customers demand them.
+
+| Lab | API | Album product | Notes |
+|---|---|---|---|
+| **[WHCC](https://www.whcc.com/developer/)** (White House Custom Colour) | Order Submit API + Editor API; used by Pixieset and SmugMug | Genuine pro albums, true layflat | **Album orders take `Individual Page JPG` (539) and `Album 2 Page Spread` (1029) item attributes** — spread-as-image is the native submission format, over an API |
+| **[Prodigi](https://www.prodigi.com/print-api/)** | Free REST API, sandbox + live environments, no minimums | Layflat photo book | Page count must be declared on the order; photo-oriented POD rather than pro lab |
+| **[Gelato](https://www.gelato.com/ca/order-flow)** | Order Flow API | Photo books | Accepts one multi-page PDF *or* one raster file per print area |
+| Bay Photo, Miller's / Mpix, Zno | Mostly ROES and named integration partners | Pro albums | Likely a conversation rather than a signup |
+
+**WHCC is the important one.** It is the only route found so far that is
+simultaneously photo-grade, fully automatable, and takes flattened spread
+images as its native input — which is exactly what the layout engine already
+plans to produce. If it works, Path A and Path B stop being different products:
+the same renderer output either gets dragged into a consumer editor or posted
+to an API.
+
+Two things to verify before relying on it, neither of which the public docs
+answer:
+
+- **Can an individual open an account and get API credentials?** WHCC is
+  trade-facing. Access may require a professional account or approval.
+- **What does an album actually cost?** Pro-lab album pricing is typically well
+  above consumer photo books — wedding albums run into the hundreds. It may
+  simply be the wrong price point for an annual family book, in which case
+  Prodigi's layflat book is the automatable fallback and Mixbook stays the
+  manual-but-cheap option.
+
 ## 2. Programmatic / PDF-in (Path B — app places the order)
 
 | Vendor | Interface | Photo-book fit | Notes |
@@ -68,7 +100,16 @@ stage around a document model rather than around a vendor.
 
 ## 3. Recommendation
 
-- **Book 1:** Path A → **Mixbook**, 11×14 or 12×12 layflat, 80–100 pages.
+- **Investigate WHCC first.** It is the only candidate that is photo-grade,
+  API-driven, and natively spread-as-image. Two phone calls' worth of
+  diligence — account eligibility and album pricing — could collapse the whole
+  manual handoff. If it clears, it becomes the default and Mixbook becomes the
+  fallback rather than the other way round.
+- **If WHCC is trade-only or too expensive:** Prodigi's layflat photo book is
+  the automatable option, Mixbook the manual one. Decide on the print, not the
+  API.
+- **Book 1 (if the above is unresolved):** Path A → **Mixbook**, 11×14 or 12×12
+  layflat, 80–100 pages.
 - **Keep Path B warm:** design the PDF renderer against **Blurb layflat specs**
   (≤110 pages fits the target anyway).
 - **Don't buy a $60 bake-off.** Separate the questions by what they actually

@@ -383,6 +383,14 @@ Everything except the VLM pass runs locally and offline.
 
 ## 5. Vendor recommendation (detail in `docs/vendors.md`)
 
+**Update — professional labs change the picture.** Consumer vendors still have
+no API of any kind. But professional photo labs do, because wedding
+photographers order albums at volume and demand automation. **WHCC's Order
+Submit API takes albums as `Individual Page JPG` and `Album 2 Page Spread`
+attributes** — spread-as-image, natively, over an API. Prodigi and Gelato also
+expose photo-book endpoints. See `docs/vendors.md` §1a; the open questions are
+whether an individual can get WHCC credentials and what an album costs.
+
 - **First book, Path A: Mixbook.** Best balance of print quality and editor in the
   2026 reviews, frequent 40–50% promos, layflat available, tolerant of a
   200-image upload. Best fit for "here is my curated set in order."
