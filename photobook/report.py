@@ -285,3 +285,73 @@ def calibration_sheet(con: sqlite3.Connection, out: Path, n: int = 24) -> Path:
 
     out.write_text("".join(parts), encoding="utf-8")
     return out
+
+
+BURST_BANDS = [(0, 6), (7, 11), (12, 16), (17, 21), (22, 26), (27, 32)]
+
+
+def burst_pairs_sheet(con: sqlite3.Connection, out: Path, per_band: int = 5,
+                      window: float = 25.0) -> Path:
+    """Consecutive photo pairs, bucketed by perceptual-hash distance.
+
+    The burst threshold cannot be read off a distribution — the observed
+    distances are smooth from 7 to 32 with no natural cliff, and 32 is simply
+    where two images are unrelated. What it needs is a human saying "these two
+    are the same moment, those two are not". This sheet asks exactly that,
+    a few pairs at a time, so the threshold gets set from ground truth.
+    """
+    from datetime import datetime
+
+    from .dedupe import hamming
+
+    rows = con.execute("""
+        SELECT a.sha, a.filename, a.path, a.taken_local, p.dhash, p.phash
+        FROM asset a JOIN phash p ON p.sha = a.sha
+        WHERE a.taken_local IS NOT NULL ORDER BY a.taken_local""").fetchall()
+
+    buckets: dict[tuple[int, int], list] = {b: [] for b in BURST_BANDS}
+    for a, b in zip(rows, rows[1:]):
+        gap = (datetime.fromisoformat(b["taken_local"])
+               - datetime.fromisoformat(a["taken_local"])).total_seconds()
+        if gap > window:
+            continue
+        dist = min(hamming(int(a["phash"], 16), int(b["phash"], 16)),
+                   hamming(int(a["dhash"], 16), int(b["dhash"], 16)))
+        for lo, hi in BURST_BANDS:
+            if lo <= dist <= hi and len(buckets[(lo, hi)]) < per_band:
+                buckets[(lo, hi)].append((a, b, dist, gap))
+                break
+
+    parts = [
+        f"<style>{CSS}"
+        ".pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;background:var(--card);"
+        "border:1px solid var(--rule);padding:8px;margin-bottom:10px}"
+        ".pair img{width:100%;height:auto;display:block}"
+        ".pair .cap{grid-column:1/-1;font-size:12.5px;color:var(--dim)}"
+        "</style>",
+        "<h1>Burst threshold calibration</h1>",
+        '<p class="sub">Consecutive photos taken within 25 seconds of each other, '
+        "grouped by how different they look. For each band, answer one question: "
+        "<b>would you ever want both of these in the book?</b> If no, they are the "
+        "same moment and the threshold belongs above that band. If yes, they are "
+        "distinct and it belongs below.</p>",
+        '<p class="sub">For reference: 32 is the distance between two completely '
+        "unrelated images, so a band near 32 means the pair only shares a "
+        "timestamp.</p>",
+    ]
+
+    for (lo, hi), pairs in buckets.items():
+        parts.append(f"<h2>Hash distance {lo}–{hi}"
+                     + (f" · {len(pairs)} shown" if pairs else " · none found")
+                     + "</h2>")
+        for a, b, dist, gap in pairs:
+            parts.append(
+                '<div class="pair">'
+                f'<img loading="lazy" src="{thumb_data_uri(Path(a["path"]), 320)}" alt="">'
+                f'<img loading="lazy" src="{thumb_data_uri(Path(b["path"]), 320)}" alt="">'
+                f'<div class="cap">distance {dist} · {gap:.0f}s apart · '
+                f'{html.escape(a["filename"])} → {html.escape(b["filename"])}</div>'
+                "</div>")
+
+    out.write_text("".join(parts), encoding="utf-8")
+    return out

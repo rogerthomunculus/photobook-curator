@@ -103,10 +103,16 @@ constraint. And at **37% portrait**, the spread grammar has to handle
 portrait-in-landscape well — the case auto-layout tools get worst, and not a
 rare edge here.
 
-**Still unknown: recompression.** Dimensions say nothing about whether the bytes
-were re-encoded. The quantization-table estimate in stage 1 answers it, and until
-`analyze` runs on the real archive the banding and blocking thresholds remain
-uncalibrated guesses.
+**Recompression: currently unmeasurable, and that is a real gap.** The archive
+is ~99% **HEIC**, not JPEG, so the quantization-table estimate — the whole
+mechanism for detecting Storage Saver's damage — returns nothing. Blockiness is
+inert too (p50 = 1.001), which is what HEVC's in-loop deblocking filter is for.
+
+Reading HEVC quantization parameters from the bitstream would fix it and is a
+genuine piece of work. Nothing downstream breaks in the meantime: the placement
+demotion for low encoder quality simply never fires, so no photo is wrongly
+demoted. The cost is that we cannot warn about a photo that will band on paper.
+Logged as future work rather than papered over.
 
 **Pixel count is mostly fine — and on this archive, entirely fine.** Storage Saver resizes anything above 16 MP down
 to 16 MP and re-encodes everything; a 12 MP phone photo keeps its 4032×3024

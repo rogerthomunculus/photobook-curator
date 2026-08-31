@@ -315,8 +315,9 @@ def score_archive(rows: list[dict], *,
             if ratio > 1.9:
                 flag("review", "probably a screenshot (no camera EXIF, screen aspect)")
 
-        if 0 <= (r.get("jpeg_quality") or -1) < 40:
-            reasons.append(f'low encoder quality (q≈{r["jpeg_quality"]:.0f})')
+        jq = r.get("jpeg_quality")
+        if jq is not None and 0 <= jq < 40:
+            reasons.append(f"low encoder quality (q≈{jq:.0f})")
 
         out[r["sha"]] = (verdict, "; ".join(reasons))
     return out

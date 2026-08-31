@@ -198,12 +198,19 @@ def cmd_stats(args) -> int:
     print(f"{'metric':18s} " + " ".join(f"{'p' + str(p):>10s}" for p in pcts)
           + f" {'ratio p5/p50':>13s}")
     for i, c in enumerate(cols):
-        vals = np.array([r[i] for r in rows if r[i] is not None], dtype=float)
+        raw = [r[i] for r in rows if r[i] is not None]
+        # -1 is the "not measurable on this file" sentinel (jpeg_quality on a
+        # non-JPEG). Averaging it in would be nonsense.
+        vals = np.array([v for v in raw if v >= 0], dtype=float)
+        missing = len(raw) - len(vals)
         if vals.size == 0:
+            print(f"{c:18s} " + " " * 88 + f"  not measurable on any of {len(raw)} files")
             continue
         qs = np.percentile(vals, pcts)
         ratio = qs[1] / qs[4] if qs[4] else float("nan")
-        print(f"{c:18s} " + " ".join(f"{v:10.4g}" for v in qs) + f" {ratio:13.3f}")
+        note = f"   ({missing} not measurable)" if missing else ""
+        print(f"{c:18s} " + " ".join(f"{v:10.4g}" for v in qs)
+              + f" {ratio:13.3f}{note}")
 
     # Burst diagnostics: what do consecutive frames actually look like?
     adj = con.execute("""
@@ -242,9 +249,13 @@ def cmd_calibrate(args) -> int:
     con = connect(root)
     out = Path(args.out or root / "calibration.html")
     report.calibration_sheet(con, out, n=args.n)
-    print(f"calibration sheet -> {out}")
-    print("Flip through it: if the 'worst' photos are not actually bad, the "
+    pairs = out.with_name("calibration-bursts.html")
+    report.burst_pairs_sheet(con, pairs)
+    print(f"quality calibration -> {out}")
+    print("  Flip through it: if the 'worst' photos are not actually bad, the "
           "metric is wrong, not the threshold.")
+    print(f"burst calibration   -> {pairs}")
+    print("  For each distance band: would you ever want both photos in the book?")
     return 0
 
 

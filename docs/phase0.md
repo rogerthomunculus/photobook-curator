@@ -176,6 +176,57 @@ previous frame. And the 14-bit Hamming threshold is still a guess —
 `photobook stats` now reports what adjacent-frame distances actually look like,
 so it can be set from data.
 
+## The archive is HEIC, so recompression detection is blind
+
+`photobook stats` on the real archive returns `jpeg_quality = -1` at every
+percentile up to p99. `-1` is the "no quantization table" sentinel, so **~99% of
+the archive is not JPEG** — it is HEIC, straight off the iPhone, and Takeout
+returns it unconverted.
+
+That removes a whole limb of the design. Quantization-table analysis was the
+mechanism for answering "did Storage Saver re-encode these", and it only works
+on JPEG. The blockiness metric is inert here too: p50 = 1.001, p99 = 1.029,
+essentially no blocking anywhere, which is exactly what HEVC's in-loop
+deblocking filter is for.
+
+So the honest position on recompression is: **we cannot currently measure it on
+this archive.** Options, none of them free:
+
+- Parse the HEVC bitstream for quantization parameters. Correct, and a real
+  piece of work.
+- Lean on the banding metric alone. It is measuring *something* — p10 to p90
+  spans 0.26 to 0.58 — but nothing has established that it correlates with
+  visible banding, so it stays a note rather than a verdict.
+- Accept the gap. Nothing downstream depends on it: the placement demotion for
+  low encoder quality simply never fires, so no photo is wrongly demoted. The
+  cost is that we cannot warn about a photo that will band on paper.
+
+Taking the third for now, with the first written down as future work.
+
+## Setting the burst threshold needs eyes, not statistics
+
+The distribution came back broad and smooth, with no cliff to cut at:
+
+```
+consecutive-frame gaps:  p10=1s  p25=3s  p50=10s  p75=110s  p90=839s
+pairs within 25s: 608 of 968  (63%)
+hash distance for those: p10=7  p25=14  p50=22  p75=28  p90=32
+```
+
+Two things worth stating precisely. **63% of consecutive photos are within 25
+seconds of each other**, so the time criterion is barely filtering anything and
+the perceptual hash is doing all of the work. And for a 64-bit hash, **32 is the
+expected distance between two completely unrelated images** — so the observed
+median of 22 means a typical near-in-time pair is already 69% of the way to
+"different scene".
+
+There is no natural boundary in that distribution, which means the threshold is
+a judgment call about what counts as "the same moment", not a fact to be
+discovered. `photobook calibrate` therefore also writes
+`calibration-bursts.html`: consecutive pairs bucketed by hash distance, asking
+one question per band — *would you ever want both of these in the book?* The
+answer sets the threshold from ground truth instead of from a percentile.
+
 ## Open calibration work, once the real archive is here
 
 - Banding threshold — currently a guess.
