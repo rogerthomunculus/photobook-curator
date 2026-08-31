@@ -61,12 +61,54 @@ Worth checking whether the **Data Portability API** exposes a Photos resource
 group that can initiate that same album export programmatically — if it does,
 the manual step disappears. Unverified; treat as a spike, not a dependency.
 
-### 1.1a Storage Saver is confirmed — what that actually costs
+### 1.1a Storage Saver — corrected against the real archive
 
-The account is on Storage Saver, so this is settled fact rather than a risk to
-manage. Three consequences, in order of how much they matter.
+**The premise was wrong.** The account setting says Storage Saver, and the
+analysis below assumed every file had therefore been capped at 16 MP. Triage on
+the real 2026 archive says otherwise:
 
-**Pixel count is mostly fine.** Storage Saver resizes anything above 16 MP down
+| | Files | Share |
+|---|---|---|
+| Above the 16 MP ceiling — so **not** downsized | 422 | 44% |
+| At or below 16 MP | 547 | 56% |
+
+422 files are 24.5 MP (4284×5712 and its landscape twin), well past any 16 MP
+cap. Whether that is because they predate the switch — Google does not
+retroactively compress — or because the ceiling behaves differently in practice,
+this archive is **not** uniformly downsized, and the plan should not have said
+it was.
+
+The mechanism survives the correction: the pipeline was already designed to
+*measure* each photo rather than assume, which is why triage surfaced this at
+all. What changes is the weight — the resolution worry was much larger in the
+plan than it is in reality.
+
+**Full triage result, 2026 archive (975 files):**
+
+| Measure | Result |
+|---|---|
+| Sidecars matched | **975 / 975**, none low-confidence |
+| Undated | **0** |
+| Timestamp from EXIF-minus-JSON | 922 (94.6%) |
+| Timestamp from the EXIF offset tag | 47 (4.8%) |
+| Timestamp from longitude (rough) | **6** (0.6%) |
+| Below 200 dpi for a full-bleed 14″ page | **0** |
+| Portrait orientation | 356 (37%) |
+
+Three things to carry forward. The **longitude fallback's two-hour error affects
+six photos** — real, but negligible in scale. **Not one photo** falls below the
+200 dpi floor for a full-bleed 14″ page; the smallest, at 2316×3088, still
+clears it, so the tiered placement cap stays as a guard rather than an active
+constraint. And at **37% portrait**, the spread grammar has to handle
+portrait-in-landscape well — the case auto-layout tools get worst, and not a
+rare edge here.
+
+**Still unknown: recompression.** Dimensions say nothing about whether the bytes
+were re-encoded. The quantization-table estimate in stage 1 answers it, and until
+`analyze` runs on the real archive the banding and blocking thresholds remain
+uncalibrated guesses.
+
+**Pixel count is mostly fine — and on this archive, entirely fine.** Storage Saver resizes anything above 16 MP down
 to 16 MP and re-encodes everything; a 12 MP phone photo keeps its 4032×3024
 dimensions and is only recompressed. Long edge at a given density:
 
@@ -88,7 +130,8 @@ floor, not a binary filter.
 **Crops and video frames are the real limit.** A half-area crop can still carry a
 full-bleed page; a quarter-area crop cannot, and Storage Saver also caps video at
 1080p, so any still pulled from a video or Live Photo is a ~2 MP asset — small
-placements only. Worth knowing before we decide whether to mine Live Photos at all.
+placements only. Worth knowing before we decide whether to mine Live Photos at all. (On the 2026
+archive this is moot: nothing is below the floor.)
 
 **Recompression is the genuine loss, and it's unrecoverable.** Google re-encoded
 every one of these files once already. That shows up as banding in skies and
