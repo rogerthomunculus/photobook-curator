@@ -70,10 +70,30 @@ waiting; analysing the wrong archive costs more.
 `--page-inches` matters: it sets the placement caps. 14 for an 11×14, 12 for a
 12×12. Ask if you do not know the book size.
 
-Report the collapse ratio (frames → moments) and the verdict split. Roughly a
-2:1 to 3:1 collapse is normal. If almost nothing collapsed, bursts are not being
-detected and the thresholds need looking at; if almost everything collapsed,
-something is wrong with the hashing.
+Report the collapse ratio (frames → moments) and the verdict split, and **treat
+an implausible result as a failure, not a pass**:
+
+- **Near-zero rejects** means the quality stage is rubber-stamping, not that the
+  archive is flawless. Any real trip has blurry frames, pocket shots and
+  screenshots.
+- **A collapse ratio near 1:1** means bursts are not being detected. 2:1 to 3:1
+  is normal.
+- **Almost everything collapsing** means the hashing is broken.
+
+Sharpness verdicts are relative to the archive's own median, so they adapt to
+the camera — but the ratios themselves are provisional. When a result looks
+wrong, do not invent new numbers. Run the instruments:
+
+```bash
+.venv/bin/photobook stats     <archive>   # the real distribution of every metric
+.venv/bin/photobook calibrate <archive>   # what each metric ranks worst
+.venv/bin/photobook rescore   <archive> --reject-ratio 0.25 --review-ratio 0.5
+```
+
+`rescore` re-assigns verdicts without re-analysing, so sweeping thresholds is
+seconds rather than minutes. **The calibration sheet is the falsifiable test:**
+if the photos the metric calls softest are not soft to the user's eye, the
+metric is wrong and no threshold will fix it — say so rather than tuning.
 
 ### Stage C — understanding (~25 min, unattended) — NOT YET BUILT
 

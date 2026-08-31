@@ -20,7 +20,8 @@ from PIL import Image
 
 BURST_SECONDS = 25.0     # max gap between consecutive frames in one burst
 BURST_MAX_SPAN = 90.0    # max total span of a burst, to stop transitive chaining
-BURST_DISTANCE = 14      # max Hamming distance from the burst anchor (64-bit hash)
+BURST_DISTANCE = 14      # max Hamming distance to the previous frame (64-bit hash)
+                         # PROVISIONAL: set from the real distribution, see `photobook stats`
 
 
 def _dct_matrix(n: int) -> np.ndarray:
@@ -98,11 +99,14 @@ def group_bursts(frames: list[Frame], *, seconds: float = BURST_SECONDS,
         if groups:
             cur = groups[-1]
             anchor, prev = cur[0], cur[-1]
+            # Appearance is compared against the *previous* frame, because a
+            # burst legitimately drifts as people move; the span cap, not a
+            # strict anchor comparison, is what stops runaway chaining.
             joins = (
                 (f.taken - prev.taken).total_seconds() <= seconds
                 and (f.taken - anchor.taken).total_seconds() <= max_span
-                and (hamming(f.phash, anchor.phash) <= distance
-                     or hamming(f.dhash, anchor.dhash) <= distance)
+                and (hamming(f.phash, prev.phash) <= distance
+                     or hamming(f.dhash, prev.dhash) <= distance)
             )
             if joins:
                 cur.append(f)

@@ -229,3 +229,59 @@ def contact_sheet(con: sqlite3.Connection, out: Path, limit: int = 400) -> Path:
     ]
     out.write_text("".join(body), encoding="utf-8")
     return out
+
+
+def calibration_sheet(con: sqlite3.Connection, out: Path, n: int = 24) -> Path:
+    """Show what each metric ranks worst, next to a random sample.
+
+    The point is falsifiability. If the photos the sharpness metric calls
+    worst are not actually soft to your eye, the metric is wrong — and no
+    amount of threshold tuning will fix it.
+    """
+    bands = [
+        ("Softest by subject sharpness",
+         "q.subject_sharpness IS NOT NULL ORDER BY q.subject_sharpness ASC",
+         "If these are not visibly soft, the sharpness metric is measuring the "
+         "wrong thing."),
+        ("Sharpest, for comparison",
+         "q.subject_sharpness IS NOT NULL ORDER BY q.subject_sharpness DESC", ""),
+        ("Most blown highlights", "1=1 ORDER BY q.clipped_high DESC", ""),
+        ("Darkest", "1=1 ORDER BY q.brightness ASC", ""),
+        ("Lowest encoder quality (most recompressed)",
+         "q.jpeg_quality >= 0 ORDER BY q.jpeg_quality ASC",
+         "Storage Saver's damage, if any, shows up here first."),
+        ("Random sample", "1=1 ORDER BY RANDOM()",
+         "The baseline: this is what a typical photo in the archive looks like."),
+    ]
+
+    parts = [f"<style>{CSS}</style><h1>Calibration</h1>",
+             '<p class="sub">What the metrics rank at each extreme. Judge the '
+             "photos, not the numbers — if the extremes look wrong, the metric "
+             "is wrong.</p>"]
+
+    for title, where, note in bands:
+        rows = con.execute(f"""
+            SELECT a.filename, a.path, q.subject_sharpness, q.brightness,
+                   q.clipped_high, q.jpeg_quality, q.verdict, q.reasons
+            FROM quality q JOIN asset a ON a.sha = q.sha
+            WHERE {where} LIMIT ?""", (n,)).fetchall()
+        parts.append(f"<h2>{html.escape(title)}</h2>")
+        if note:
+            parts.append(f'<p class="sub">{html.escape(note)}</p>')
+        cells = []
+        for r in rows:
+            meta = (f'sharp {r["subject_sharpness"]:.0f} · '
+                    f'bright {r["brightness"]:.0f} · '
+                    f'blown {r["clipped_high"] * 100:.0f}% · '
+                    f'q{r["jpeg_quality"]:.0f}')
+            v = r["verdict"] or "unscored"
+            cells.append(
+                f'<div class="cell">'
+                f'<img loading="lazy" src="{thumb_data_uri(Path(r["path"]), 190)}" alt="">'
+                f'<div class="m"><div class="n">{html.escape(r["filename"])}</div>'
+                f'<div class="r"><span class="tag {v}">{v}</span></div>'
+                f'<div class="r">{html.escape(meta)}</div></div></div>')
+        parts.append(f'<div class="grid">{"".join(cells)}</div>')
+
+    out.write_text("".join(parts), encoding="utf-8")
+    return out

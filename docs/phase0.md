@@ -129,6 +129,53 @@ Both are covered by regression tests in `tests/test_takeout.py`.
 - `exact_duplicates()` was unused, O(n²), and duplicated what burst grouping
   already does. Deleted.
 
+## The first real run failed, and how
+
+Running stage 1 on the real 969-photo archive returned **965 keep, 4 review, 0
+reject**. That is not a pass; no archive of 969 trip photos contains zero bad
+frames. The quality stage was rubber-stamping.
+
+**Cause: the thresholds were calibrated on synthetic images and are wrong by
+three orders of magnitude on photographs.** The fixture's scenes are smooth
+gradients with a few hard-edged circles, so the per-tile Laplacian variance
+spread out nicely and a reject threshold of 12 separated sharp from blurred. A
+real photograph has fine detail *somewhere* almost always — foliage, gravel,
+fabric, hair — so the 90th-percentile tile mostly answers "is there any texture
+in this frame at all", and the answer is yes. On a synthetic-but-textured test,
+a heavily blurred frame scored **18,249** against that threshold of 12.
+
+Three changes came out of it.
+
+**Measurement is now separate from judgment.** `analyze()` only measures;
+`score_archive()` assigns verdicts once every photo has been measured. Re-scoring
+therefore costs nothing — no image is decoded again — so thresholds can be swept
+against the real distribution instead of guessed once and shipped.
+
+**Sharpness verdicts are relative to the archive's own median**, not absolute. A
+ratio is scale-free, so it survives a change of camera, lens or subject. It is
+also better than a percentile rule, which would always condemn a fixed share of
+the archive even when every photo is genuinely fine — a ratio rule can correctly
+reject nothing.
+
+**Two new commands exist so the next threshold is measured rather than
+invented.** `photobook stats` prints percentiles for every metric plus the
+distribution of hash distances between temporally adjacent frames.
+`photobook calibrate` writes a small sheet of what each metric ranks worst
+beside a random sample — the falsifiable test, because if the photos the metric
+calls softest are not soft to the eye then the metric is wrong and no threshold
+will save it.
+
+## Burst detection was also too strict
+
+The same run collapsed 969 frames into 808 moments — a ratio of 1.2:1 where
+2.5:1 was expected. Two contributing causes. Comparing each candidate against
+the burst *anchor* rather than its predecessor, introduced to stop transitive
+chaining, is too strict for a real burst that drifts as people move; the 90
+second span cap already prevents chaining, so the comparison is back to the
+previous frame. And the 14-bit Hamming threshold is still a guess —
+`photobook stats` now reports what adjacent-frame distances actually look like,
+so it can be set from data.
+
 ## Open calibration work, once the real archive is here
 
 - Banding threshold — currently a guess.

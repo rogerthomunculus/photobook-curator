@@ -19,7 +19,7 @@ from . import report
 from .db import connect
 from .dedupe import Frame, group_bursts, hashes
 from .ingest import ingest_dir
-from .quality import analyze
+from .quality import analyze, score_archive
 
 
 def _progress(i: int, n: int, label: str) -> None:
@@ -134,6 +134,8 @@ def cmd_analyze(args) -> int:
         con.executemany("INSERT INTO burst (sha,burst_id,is_representative) VALUES (?,?,?)",
                         [(sha, bid, int(rep)) for sha, (bid, rep) in groups.items()])
 
+    _rescore(con, args)
+
     if failures:
         print(f"\n{len(failures)} image(s) could not be analysed:")
         for f in failures[:10]:
@@ -147,6 +149,102 @@ def cmd_analyze(args) -> int:
     for verdict, count in con.execute(
             "SELECT verdict, COUNT(*) c FROM quality GROUP BY verdict ORDER BY c DESC"):
         print(f"  {verdict:8s} {count}")
+    return 0
+
+
+def _rescore(con, args) -> None:
+    """Assign verdicts across the whole archive. Cheap: no image is re-read."""
+    rows = [dict(r) for r in con.execute("""
+        SELECT q.sha, q.subject_sharpness, q.clipped_high, q.clipped_low,
+               q.brightness, q.contrast, q.jpeg_quality, q.banding,
+               q.placement_cap, q.reasons, a.width, a.height, a.camera
+        FROM quality q JOIN asset a ON a.sha = q.sha""")]
+    if not rows:
+        return
+    verdicts = score_archive(
+        rows,
+        reject_ratio=getattr(args, "reject_ratio", 0.20),
+        review_ratio=getattr(args, "review_ratio", 0.45),
+    )
+    with con:
+        con.executemany("UPDATE quality SET verdict=?, reasons=? WHERE sha=?",
+                        [(v, why, sha) for sha, (v, why) in verdicts.items()])
+
+
+def cmd_rescore(args) -> int:
+    """Re-assign verdicts with different thresholds, without re-analysing."""
+    con = connect(Path(args.archive).expanduser().resolve())
+    _rescore(con, args)
+    for verdict, count in con.execute(
+            "SELECT verdict, COUNT(*) c FROM quality GROUP BY verdict ORDER BY c DESC"):
+        print(f"  {verdict:8s} {count}")
+    return 0
+
+
+def cmd_stats(args) -> int:
+    """Print the real distribution of every metric, so thresholds stop being guesses."""
+    import numpy as np
+
+    con = connect(Path(args.archive).expanduser().resolve())
+    cols = ["subject_sharpness", "laplacian_var", "sharp_tile_ratio", "tenengrad",
+            "brightness", "contrast", "clipped_high", "clipped_low",
+            "jpeg_quality", "blockiness", "banding"]
+    rows = con.execute(f"SELECT {','.join(cols)} FROM quality").fetchall()
+    if not rows:
+        print("nothing analysed yet")
+        return 1
+
+    pcts = [1, 5, 10, 25, 50, 75, 90, 99]
+    print(f"{'metric':18s} " + " ".join(f"{'p' + str(p):>10s}" for p in pcts)
+          + f" {'ratio p5/p50':>13s}")
+    for i, c in enumerate(cols):
+        vals = np.array([r[i] for r in rows if r[i] is not None], dtype=float)
+        if vals.size == 0:
+            continue
+        qs = np.percentile(vals, pcts)
+        ratio = qs[1] / qs[4] if qs[4] else float("nan")
+        print(f"{c:18s} " + " ".join(f"{v:10.4g}" for v in qs) + f" {ratio:13.3f}")
+
+    # Burst diagnostics: what do consecutive frames actually look like?
+    adj = con.execute("""
+        SELECT a.taken_local, p.dhash, p.phash FROM asset a
+        JOIN phash p ON p.sha = a.sha
+        WHERE a.taken_local IS NOT NULL ORDER BY a.taken_local""").fetchall()
+    if len(adj) > 1:
+        from datetime import datetime
+
+        from .dedupe import hamming
+        gaps, dists = [], []
+        for a, b in zip(adj, adj[1:]):
+            gap = (datetime.fromisoformat(b["taken_local"])
+                   - datetime.fromisoformat(a["taken_local"])).total_seconds()
+            gaps.append(gap)
+            if gap <= 25:      # only pairs the burst rule would even consider
+                dists.append(min(hamming(int(a["phash"], 16), int(b["phash"], 16)),
+                                 hamming(int(a["dhash"], 16), int(b["dhash"], 16))))
+        g = np.array(gaps)
+        print(f"\nconsecutive-frame gaps (seconds): "
+              + " ".join(f"p{p}={np.percentile(g, p):.0f}" for p in (10, 25, 50, 75, 90)))
+        print(f"pairs within {25}s: {len(dists)} of {len(gaps)}")
+        if dists:
+            d = np.array(dists)
+            print("hash distance for those pairs:      "
+                  + " ".join(f"p{p}={np.percentile(d, p):.0f}" for p in (10, 25, 50, 75, 90))
+                  + f"   (current threshold {14})")
+            for t in (8, 12, 14, 18, 22, 26, 30):
+                print(f"    distance <= {t:2d}: {100 * (d <= t).mean():5.1f}% of near-in-time pairs")
+    return 0
+
+
+def cmd_calibrate(args) -> int:
+    """Small HTML showing what the metrics rank worst, so a human can check them."""
+    root = Path(args.archive).expanduser().resolve()
+    con = connect(root)
+    out = Path(args.out or root / "calibration.html")
+    report.calibration_sheet(con, out, n=args.n)
+    print(f"calibration sheet -> {out}")
+    print("Flip through it: if the 'worst' photos are not actually bad, the "
+          "metric is wrong, not the threshold.")
     return 0
 
 
@@ -169,6 +267,10 @@ def main(argv: list[str] | None = None) -> int:
         ("ingest", cmd_ingest, "hash, read EXIF and sidecars, populate the store"),
         ("analyze", cmd_analyze, "quality metrics, perceptual hashes, burst grouping"),
         ("sheet", cmd_sheet, "write a contact sheet of every moment"),
+        ("stats", cmd_stats, "print the real distribution of every metric"),
+        ("rescore", cmd_rescore, "re-assign verdicts without re-analysing"),
+        ("calibrate", cmd_calibrate,
+         "small sheet of the extremes, to check the metrics against your eye"),
     ):
         p = sub.add_parser(name, help=helptext)
         p.add_argument("archive", help="path to the extracted Takeout (or any folder)")
@@ -182,6 +284,15 @@ def main(argv: list[str] | None = None) -> int:
     sub.choices["analyze"].add_argument(
         "--force", action="store_true", help="re-analyse images already scored")
     sub.choices["sheet"].add_argument("--limit", type=int, default=400)
+    sub.choices["calibrate"].add_argument(
+        "--n", type=int, default=24, help="photos per band (default 24)")
+    for cmd in ("analyze", "rescore"):
+        sub.choices[cmd].add_argument(
+            "--reject-ratio", type=float, default=0.20, dest="reject_ratio",
+            help="reject below this fraction of the archive's median sharpness")
+        sub.choices[cmd].add_argument(
+            "--review-ratio", type=float, default=0.45, dest="review_ratio",
+            help="flag for review below this fraction of median sharpness")
 
     args = ap.parse_args(argv)
     return args.func(args)

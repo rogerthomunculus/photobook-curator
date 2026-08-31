@@ -47,6 +47,21 @@ PLACEMENT_FRACTION = {"full_bleed": 1.0, "half": 0.7, "quarter": 0.5}
 DPI_FLOOR = 200          # below this a placement is not worth printing
 DPI_COMFORTABLE = 240
 
+# Sharpness verdicts are relative to this archive's own median, not absolute.
+#
+# The first version used absolute thresholds tuned on synthetic images and was
+# wrong by three orders of magnitude on real photographs: a heavily blurred but
+# textured frame scored ~18,000 against a reject threshold of 12. Real photos
+# almost always have fine detail *somewhere* — foliage, gravel, fabric — so the
+# 90th-percentile tile mostly answers "is there any texture at all", which is
+# yes for everything.
+#
+# A ratio to the median is scale-free, so it survives a change of camera, lens
+# or subject matter. It is also better than a percentile rule, which would
+# always condemn a fixed share of the archive even when every photo is fine.
+SHARP_REJECT_RATIO = 0.20
+SHARP_REVIEW_RATIO = 0.45
+
 
 @dataclass
 class Metrics:
@@ -67,8 +82,8 @@ class Metrics:
     max_in_240: float
     max_in_200: float
     placement_cap: str
-    verdict: str
-    reasons: str
+    verdict: str = "unscored"   # assigned later, by score_archive()
+    reasons: str = ""
 
 
 def estimate_jpeg_quality(img: Image.Image) -> float:
@@ -220,44 +235,6 @@ def analyze(path: Path, page_long_in: float = 14.0) -> Metrics:
     long_px = max(w, h)
     cap, notes = _placement(long_px, page_long_in, jpeg_q, block)
 
-    reasons = list(notes)
-    verdict = "keep"
-
-    def flag(level: str, why: str) -> None:
-        nonlocal verdict
-        reasons.append(why)
-        if level == "reject" or (level == "review" and verdict == "keep"):
-            verdict = level
-
-    # Focus, measured on the contrast-normalised frame.
-    if subj < 12.0:
-        flag("reject", f"out of focus (subject sharpness {subj:.1f})")
-    elif subj < 30.0:
-        flag("review", f"soft (subject sharpness {subj:.1f})")
-
-    # Exposure, measured on the original.
-    if hi > 0.18:
-        flag("review", f"{hi * 100:.0f}% blown highlights")
-    if lo > 0.35:
-        flag("review", f"{lo * 100:.0f}% crushed shadows")
-    if bright < 45.0:
-        flag("review", f"underexposed (mean level {bright:.0f})")
-    elif bright > 215.0:
-        flag("review", f"overexposed (mean level {bright:.0f})")
-    if contrast < 12.0:
-        flag("review", "very flat contrast")
-
-    # Print viability.
-    if cap == "reject":
-        flag("reject", f"too small to print ({w}×{h})")
-    if 0 <= jpeg_q < 40:
-        reasons.append(f"low encoder quality (q≈{jpeg_q:.0f})")
-    # NOTE: the banding threshold is a placeholder. Calibrate it against the
-    # real Storage Saver archive before trusting it — synthetic gradients band
-    # far more readily than photographs do.
-    if band > 0.45:
-        reasons.append(f"banding in smooth areas ({band:.2f})")
-
     return Metrics(
         width=w, height=h,
         laplacian_var=lap_var, tenengrad=ten,
@@ -266,9 +243,80 @@ def analyze(path: Path, page_long_in: float = 14.0) -> Metrics:
         jpeg_quality=jpeg_q, blockiness=block, banding=band,
         max_in_300=long_px / 300.0, max_in_240=long_px / DPI_COMFORTABLE,
         max_in_200=long_px / DPI_FLOOR,
-        placement_cap=cap, verdict=verdict, reasons="; ".join(reasons),
+        placement_cap=cap, reasons="; ".join(notes),
     )
 
 
 def as_row(m: Metrics) -> dict:
     return asdict(m)
+
+
+# --------------------------------------------------------------------------
+# Verdicts, assigned across the whole archive once every photo is measured.
+
+def score_archive(rows: list[dict], *,
+                  reject_ratio: float = SHARP_REJECT_RATIO,
+                  review_ratio: float = SHARP_REVIEW_RATIO) -> dict[str, tuple[str, str]]:
+    """Assign a verdict to every photo, relative to this archive.
+
+    `rows` needs `sha`, `subject_sharpness`, `clipped_high`, `clipped_low`,
+    `brightness`, `contrast`, `placement_cap`, `jpeg_quality`, `banding`,
+    `width`, `height`, `camera`, and any notes from the measurement pass.
+    Returns sha -> (verdict, reasons).
+
+    Separating this from measurement means re-scoring is free — no image is
+    decoded again — so thresholds can be swept against the real distribution
+    instead of guessed once.
+    """
+    sharp = [r["subject_sharpness"] for r in rows
+             if r.get("subject_sharpness") is not None]
+    median = float(np.median(sharp)) if sharp else 0.0
+    out: dict[str, tuple[str, str]] = {}
+
+    for r in rows:
+        reasons = [x for x in [r.get("reasons") or ""] if x]
+        verdict = "keep"
+
+        def flag(level: str, why: str) -> None:
+            nonlocal verdict
+            reasons.append(why)
+            if level == "reject" or (level == "review" and verdict == "keep"):
+                verdict = level
+
+        s_val = r.get("subject_sharpness")
+        if median > 0 and s_val is not None:
+            rel = s_val / median
+            if rel < reject_ratio:
+                flag("reject", f"out of focus ({rel:.0%} of this trip's median sharpness)")
+            elif rel < review_ratio:
+                flag("review", f"soft ({rel:.0%} of median sharpness)")
+
+        # Exposure thresholds stay absolute: clipping and mean level are
+        # physically meaningful and do not depend on the archive.
+        if (v := r.get("clipped_high") or 0) > 0.18:
+            flag("review", f"{v * 100:.0f}% blown highlights")
+        if (v := r.get("clipped_low") or 0) > 0.35:
+            flag("review", f"{v * 100:.0f}% crushed shadows")
+        if (v := r.get("brightness")) is not None:
+            if v < 45:
+                flag("review", f"underexposed (mean level {v:.0f})")
+            elif v > 215:
+                flag("review", f"overexposed (mean level {v:.0f})")
+        if (v := r.get("contrast")) is not None and v < 12:
+            flag("review", "very flat contrast")
+
+        if r.get("placement_cap") == "reject":
+            flag("reject", f'too small to print ({r.get("width")}×{r.get("height")})')
+
+        # A screenshot has no camera in EXIF and a screen-shaped aspect ratio.
+        w, h = r.get("width") or 0, r.get("height") or 0
+        if w and h and not r.get("camera"):
+            ratio = max(w, h) / min(w, h)
+            if ratio > 1.9:
+                flag("review", "probably a screenshot (no camera EXIF, screen aspect)")
+
+        if 0 <= (r.get("jpeg_quality") or -1) < 40:
+            reasons.append(f'low encoder quality (q≈{r["jpeg_quality"]:.0f})')
+
+        out[r["sha"]] = (verdict, "; ".join(reasons))
+    return out
